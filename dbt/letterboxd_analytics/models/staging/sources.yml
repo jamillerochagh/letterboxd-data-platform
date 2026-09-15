@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Raw data loaded into PostgreSQL by the Python ingestion pipeline.
+    schema: raw
+
+    tables:
+      - name: movies
+        description: Movie metadata enriched with TMDB data.
+
+      - name: user_movies
+        description: Movie-level activity associated with a Letterboxd profile.
+
+      - name: watch_events
+        description: Individual viewing events from the Letterboxd diary.

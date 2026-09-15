@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: letterboxd_postgres
+
+    environment:
+      POSTGRES_USER: letterboxd
+      POSTGRES_PASSWORD: letterboxd
+      POSTGRES_DB: letterboxd
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - letterboxd_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U letterboxd -d letterboxd"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  letterboxd_postgres_data:

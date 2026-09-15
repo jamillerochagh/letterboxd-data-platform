@@ -1,0 +1,45 @@
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Streamlit local secrets
+.streamlit/secrets.toml
+
+# Letterboxd personal exports
+*.zip
+data/
+exports/
+uploads/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Logs
+*.log
+
+# dbt
+dbt/**/target/
+dbt/**/logs/
+dbt/**/dbt_packages/
+
+# Testing / cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: stg_movies
+    description: Clean movie metadata prepared for analytics.
+
+    columns:
+      - name: tmdb_id
+        data_tests:
+          - not_null
+          - unique
+
+      - name: title
+        data_tests:
+          - not_null
+
+  - name: stg_user_movies
+    description: Movie-level activity for each Letterboxd profile.
+
+    columns:
+      - name: profile_id
+        data_tests:
+          - not_null
+
+      - name: letterboxd_uri
+        data_tests:
+          - not_null
+
+  - name: stg_watch_events
+    description: Individual Letterboxd diary viewing events.
+
+    columns:
+      - name: watch_event_id
+        data_tests:
+          - not_null
+          - unique
+
+      - name: profile_id
+        data_tests:
+          - not_null
+
+      - name: watched_date
+        data_tests:
+          - not_null

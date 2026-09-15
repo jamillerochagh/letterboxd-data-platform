@@ -1,0 +1,56 @@
+version: 2
+
+models:
+  - name: dim_movies
+    description: Movie dimension containing enriched TMDB metadata.
+
+    columns:
+      - name: tmdb_id
+        data_tests:
+          - not_null
+          - unique
+
+      - name: title
+        data_tests:
+          - not_null
+
+  - name: fct_watch_events
+    description: Fact table containing individual Letterboxd viewing events.
+
+    columns:
+      - name: watch_event_id
+        data_tests:
+          - not_null
+          - unique
+
+      - name: profile_id
+        data_tests:
+          - not_null
+
+      - name: watched_date
+        data_tests:
+          - not_null
+
+  - name: mart_user_history
+    description: Movie-level analytical history for each Letterboxd profile.
+
+    columns:
+      - name: profile_id
+        data_tests:
+          - not_null
+
+      - name: letterboxd_uri
+        data_tests:
+          - not_null
+
+  - name: mart_monthly_activity
+    description: Monthly viewing KPIs for each Letterboxd profile.
+
+    columns:
+      - name: profile_id
+        data_tests:
+          - not_null
+
+      - name: month
+        data_tests:
+          - not_null
