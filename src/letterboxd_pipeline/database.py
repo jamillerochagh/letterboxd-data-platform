@@ -1,15 +1,50 @@
 import os
+from urllib.parse import urlparse
 
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
 
 
 load_dotenv()
 
 
+def get_secret(name: str):
+    """
+    Load configuration from environment variables first,
+    then Streamlit Secrets when running on Streamlit Cloud.
+    """
+    value = os.getenv(name)
+
+    if value:
+        return str(value).strip()
+
+    try:
+        import streamlit as st
+
+        if name in st.secrets:
+            value = st.secrets[name]
+
+            if value:
+                return str(value).strip()
+
+    except Exception:
+        pass
+
+    return None
+
+
 def get_database_url() -> str:
+    """
+    Return the production DATABASE_URL when available.
+    Otherwise build the local PostgreSQL URL.
+    """
+
+    database_url = get_secret("DATABASE_URL")
+
+    if database_url:
+        return database_url
+
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     database = os.getenv("POSTGRES_DB", "letterboxd")
@@ -22,62 +57,49 @@ def get_database_url() -> str:
     )
 
 
+def log_database_config(database_url: str) -> None:
+    """
+    Print safe connection diagnostics without exposing the password.
+    """
+
+    try:
+        parsed = urlparse(database_url)
+
+        print(
+            "DATABASE CONFIG | "
+            f"host={parsed.hostname} | "
+            f"port={parsed.port} | "
+            f"user={parsed.username} | "
+            f"database={parsed.path.lstrip('/')}"
+        )
+
+    except Exception as error:
+        print(
+            "DATABASE CONFIG ERROR | "
+            f"{type(error).__name__}: {error}"
+        )
+
+
 def get_engine():
     """
     Create a PostgreSQL connection.
 
     Production:
-        Uses DATABASE_URL (Supabase).
+        Uses DATABASE_URL from environment variables
+        or Streamlit Secrets.
 
     Local development:
-        Uses the individual PostgreSQL variables from .env.
+        Uses individual PostgreSQL variables from .env.
     """
 
-    database_url = os.getenv("DATABASE_URL")
+    database_url = get_database_url()
 
-    # Production / hosted database
-    if database_url:
-        return create_engine(
-            database_url,
-            pool_pre_ping=True,
-            pool_recycle=300,
-        )
-
-    # Local Docker PostgreSQL
-    host = os.getenv(
-        "POSTGRES_HOST",
-        "localhost",
-    )
-
-    port = os.getenv(
-        "POSTGRES_PORT",
-        "5432",
-    )
-
-    database = os.getenv(
-        "POSTGRES_DB",
-        "letterboxd",
-    )
-
-    user = os.getenv(
-        "POSTGRES_USER",
-        "letterboxd",
-    )
-
-    password = os.getenv(
-        "POSTGRES_PASSWORD",
-        "letterboxd",
-    )
-
-    local_url = (
-        f"postgresql+psycopg2://"
-        f"{user}:{password}"
-        f"@{host}:{port}/{database}"
-    )
+    log_database_config(database_url)
 
     return create_engine(
-        local_url,
+        database_url,
         pool_pre_ping=True,
+        pool_recycle=300,
     )
 
 
@@ -116,8 +138,12 @@ def load_dataframe(
         f"Loaded {len(df)} rows into "
         f"{schema}.{table_name}"
     )
+
+
 def get_cached_movies() -> pd.DataFrame:
-    """Load the shared TMDB movie cache from PostgreSQL."""
+    """
+    Load the shared TMDB movie cache from PostgreSQL.
+    """
 
     engine = get_engine()
 
@@ -127,13 +153,28 @@ def get_cached_movies() -> pd.DataFrame:
     """
 
     try:
-        return pd.read_sql(query, engine)
-    except Exception:
+        movies = pd.read_sql(query, engine)
+
+        print(
+            "DATABASE CACHE | "
+            f"loaded={len(movies)} movies"
+        )
+
+        return movies
+
+    except Exception as error:
+        print(
+            "DATABASE CACHE ERROR | "
+            f"{type(error).__name__}: {error}"
+        )
+
         return pd.DataFrame()
 
 
 def upsert_movies(df: pd.DataFrame) -> None:
-    """Add new movies to the shared PostgreSQL movie cache."""
+    """
+    Add new movies to the shared PostgreSQL movie cache.
+    """
 
     if df.empty:
         return
@@ -147,7 +188,9 @@ def upsert_movies(df: pd.DataFrame) -> None:
             pd.to_numeric(
                 existing["tmdb_id"],
                 errors="coerce",
-            ).dropna().astype(int)
+            )
+            .dropna()
+            .astype(int)
         )
 
         new_ids = pd.to_numeric(
@@ -172,4 +215,7 @@ def upsert_movies(df: pd.DataFrame) -> None:
         chunksize=500,
     )
 
-    print(f"Cached {len(df)} new movies.")   
+    print(
+        "DATABASE CACHE | "
+        f"cached={len(df)} new movies"
+    )
