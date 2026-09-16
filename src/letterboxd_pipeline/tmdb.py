@@ -14,6 +14,12 @@ def _request(endpoint: str, params: dict) -> dict:
         "api_key": TMDB_API_KEY,
     }
 
+    print(
+    "TMDB CONFIG | "
+    f"key_loaded={bool(TMDB_API_KEY)} | "
+    f"key_length={len(TMDB_API_KEY) if TMDB_API_KEY else 0}"
+)
+
     response = requests.get(
         f"{TMDB_BASE_URL}{endpoint}",
         params=params,
