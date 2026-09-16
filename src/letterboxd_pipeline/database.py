@@ -22,8 +22,63 @@ def get_database_url() -> str:
     )
 
 
-def get_engine() -> Engine:
-    return create_engine(get_database_url())
+def get_engine():
+    """
+    Create a PostgreSQL connection.
+
+    Production:
+        Uses DATABASE_URL (Supabase).
+
+    Local development:
+        Uses the individual PostgreSQL variables from .env.
+    """
+
+    database_url = os.getenv("DATABASE_URL")
+
+    # Production / hosted database
+    if database_url:
+        return create_engine(
+            database_url,
+            pool_pre_ping=True,
+            pool_recycle=300,
+        )
+
+    # Local Docker PostgreSQL
+    host = os.getenv(
+        "POSTGRES_HOST",
+        "localhost",
+    )
+
+    port = os.getenv(
+        "POSTGRES_PORT",
+        "5432",
+    )
+
+    database = os.getenv(
+        "POSTGRES_DB",
+        "letterboxd",
+    )
+
+    user = os.getenv(
+        "POSTGRES_USER",
+        "letterboxd",
+    )
+
+    password = os.getenv(
+        "POSTGRES_PASSWORD",
+        "letterboxd",
+    )
+
+    local_url = (
+        f"postgresql+psycopg2://"
+        f"{user}:{password}"
+        f"@{host}:{port}/{database}"
+    )
+
+    return create_engine(
+        local_url,
+        pool_pre_ping=True,
+    )
 
 
 def test_connection() -> bool:
