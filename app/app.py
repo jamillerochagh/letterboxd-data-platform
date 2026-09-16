@@ -52,12 +52,12 @@ st.set_page_config(
 # LETTERBOXD THEME
 # =========================================================
 
-BACKGROUND = "#14181C"
-CARD = "#1F2A36"
-BORDER = "#2C3440"
+BACKGROUND = "#0B0D10"
+CARD = "#151A1E"
+BORDER = "#303A43"
 
-TEXT = "#FFFFFF"
-MUTED = "#9AB0C3"
+TEXT = "#F4F7F9"
+MUTED = "#A8B3BD"
 
 GREEN = "#00E054"
 ORANGE = "#FF8000"
@@ -67,84 +67,87 @@ BLUE = "#40BCF4"
 st.markdown(
     """
     <style>
-
-    .stApp {
-        background-color: #14181C;
-        color: #FFFFFF;
+    :root {
+        --lb-bg:#0B0D10; --lb-surface:#151A1E; --lb-surface-2:#1B2229;
+        --lb-border:#303A43; --lb-text:#F4F7F9; --lb-muted:#A8B3BD;
+        --lb-green:#00E054; --lb-orange:#FF8000; --lb-blue:#40BCF4;
     }
-
-    [data-testid="stHeader"] {
-        background-color: #14181C;
+    html, body, [data-testid="stAppViewContainer"], .stApp {
+        background:var(--lb-bg)!important; color:var(--lb-text)!important;
     }
+    [data-testid="stHeader"] { background:rgba(11,13,16,.96)!important; }
+    [data-testid="stMainBlockContainer"] { padding-top:2rem; }
+    h1,h2,h3,h4,h5,h6,[data-testid="stMarkdownContainer"] { color:var(--lb-text); }
+    .stCaption,[data-testid="stCaptionContainer"] { color:var(--lb-muted)!important; }
 
     [data-testid="stMetric"] {
-        background-color: #1F2A36;
-        border: 1px solid #2C3440;
-        border-radius: 10px;
-        padding: 18px;
+        background:var(--lb-surface)!important; border:1px solid var(--lb-border)!important;
+        border-radius:12px!important; padding:18px!important;
+        box-shadow:0 8px 24px rgba(0,0,0,.16);
     }
-
-    [data-testid="stMetricLabel"] {
-        color: #9AB0C3;
-    }
-
-    [data-testid="stMetricValue"] {
-        color: #FFFFFF;
-    }
+    [data-testid="stMetricLabel"] { color:var(--lb-muted)!important; }
+    [data-testid="stMetricValue"] { color:var(--lb-text)!important; }
 
     [data-testid="stFileUploader"] {
-        background-color: #1F2A36;
-        border-radius: 10px;
-        padding: 18px;
+        background:var(--lb-surface)!important; border:1px solid var(--lb-border)!important;
+        border-radius:12px!important; padding:18px!important; color:var(--lb-text)!important;
+    }
+    [data-testid="stFileUploaderDropzone"],[data-testid="stFileUploader"] section {
+        background:var(--lb-surface-2)!important; border:1px dashed #56636F!important;
+        border-radius:10px!important; color:var(--lb-text)!important;
+    }
+    [data-testid="stFileUploader"] section *,[data-testid="stFileUploaderFile"] * {
+        color:var(--lb-text)!important;
+    }
+    [data-testid="stFileUploader"] section small { color:var(--lb-muted)!important; }
+    [data-testid="stFileUploader"] button {
+        background:#27313A!important; color:var(--lb-text)!important;
+        border:1px solid #56636F!important;
+    }
+    [data-testid="stFileUploaderFile"] {
+        background:var(--lb-surface-2)!important; border:1px solid var(--lb-border)!important;
+        color:var(--lb-text)!important;
     }
 
     .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
+        gap:6px; background:transparent!important; border-bottom:1px solid var(--lb-border);
     }
-
     .stTabs [data-baseweb="tab"] {
-        background-color: #1F2A36;
-        border-radius: 8px 8px 0 0;
-        padding: 10px 20px;
+        background:transparent!important; color:var(--lb-muted)!important;
+        border-radius:0!important; padding:10px 16px!important;
+        border-bottom:3px solid transparent!important;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        color:var(--lb-text)!important; border-bottom-color:var(--lb-green)!important;
+    }
+    .stTabs [data-baseweb="tab-highlight"] { background-color:var(--lb-green)!important; }
+
+    [data-testid="stAlert"] {
+        background:var(--lb-surface-2)!important; color:var(--lb-text)!important;
+        border:1px solid var(--lb-border)!important; border-radius:10px!important;
+    }
+    [data-testid="stDataFrame"],[data-testid="stTable"] {
+        border:1px solid var(--lb-border); border-radius:10px; overflow:hidden;
     }
 
-    .stTabs [aria-selected="true"] {
-        color: #00E054;
+    input { color:var(--lb-text)!important; }
+    input::placeholder { color:var(--lb-muted)!important; opacity:1; }
+    [data-baseweb="input"]>div,[data-baseweb="select"]>div {
+        background:var(--lb-surface-2)!important; border-color:var(--lb-border)!important;
+        color:var(--lb-text)!important;
     }
+    hr { border-color:var(--lb-border)!important; }
 
-    hr {
-        border-color: #2C3440;
+    .taste-card,.crowd-card {
+        background:var(--lb-surface)!important; border-color:var(--lb-border)!important;
+        box-shadow:0 8px 24px rgba(0,0,0,.14);
     }
-
-
-
-    /* Strong contrast for Streamlit native controls */
-    [data-testid="stFileUploader"] { color: #FFFFFF !important; }
-    [data-testid="stFileUploader"] section {
-        background-color: #1F2A36 !important;
-        border: 1px dashed #52606D !important;
-        border-radius: 10px !important;
+    .recommendation-title {
+        color:var(--lb-text); font-size:16px; font-weight:650; line-height:1.25; margin-top:8px;
     }
-    [data-testid="stFileUploader"] section * { color: #FFFFFF !important; }
-    [data-testid="stFileUploader"] section small { color: #9AB0C3 !important; }
-    [data-testid="stFileUploader"] button {
-        background-color: #2C3440 !important;
-        color: #FFFFFF !important;
-        border: 1px solid #52606D !important;
-    }
-    [data-testid="stFileUploaderFile"] {
-        background-color: #1F2A36 !important;
-        color: #FFFFFF !important;
-        border: 1px solid #2C3440 !important;
-    }
-    [data-testid="stFileUploaderFile"] * { color: #FFFFFF !important; }
-    input { color: #FFFFFF !important; }
-    input::placeholder { color: #9AB0C3 !important; opacity: 1; }
-    [data-baseweb="input"] > div,
-    [data-baseweb="select"] > div {
-        background-color: #1F2A36 !important;
-        border-color: #2C3440 !important;
-        color: #FFFFFF !important;
+    .recommendation-info,.recommendation-tmdb { color:var(--lb-muted); font-size:13px; }
+    .recommendation-match {
+        color:var(--lb-green); font-size:13px; font-weight:650; margin-top:4px;
     }
     </style>
     """,
@@ -702,7 +705,7 @@ def render_overview(
 
     st.plotly_chart(
         activity_chart,
-        use_container_width=True,
+        width="stretch",
     )
 
     # -----------------------------------------------------
@@ -762,7 +765,7 @@ def render_overview(
 
         st.plotly_chart(
             year_chart,
-            use_container_width=True,
+            width="stretch",
         )
 
     # -----------------------------------------------------
@@ -845,7 +848,7 @@ def render_overview(
 
         st.plotly_chart(
             month_chart,
-            use_container_width=True,
+            width="stretch",
         )
 
     # -----------------------------------------------------
@@ -884,7 +887,7 @@ def render_overview(
             recent[
                 recent_columns
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -1012,15 +1015,15 @@ def render_your_taste(
         <style>
 
         .taste-card {
-            background-color: #1F2A36;
-            border: 1px solid #2C3440;
+            background-color: #151A1E;
+            border: 1px solid #303A43;
             border-radius: 10px;
             padding: 18px;
             min-height: 115px;
         }
 
         .taste-card-label {
-            color: #9AB0C3;
+            color: #A8B3BD;
             font-size: 14px;
             margin-bottom: 8px;
         }
@@ -1158,7 +1161,7 @@ def render_your_taste(
 
                 st.plotly_chart(
                     genre_chart,
-                    use_container_width=True,
+                    width="stretch",
                 )
 
     # -----------------------------------------------------
@@ -1211,7 +1214,7 @@ def render_your_taste(
 
                 st.plotly_chart(
                     director_chart,
-                    use_container_width=True,
+                    width="stretch",
                 )
 
         # =====================================================
@@ -1324,7 +1327,7 @@ def render_your_taste(
 
         st.plotly_chart(
             combination_chart,
-            use_container_width=True,
+            width="stretch",
         )
 
     else:
@@ -1424,7 +1427,7 @@ def render_your_taste(
 
             st.plotly_chart(
                 runtime_chart,
-                use_container_width=True,
+                width="stretch",
             )
 
     # -----------------------------------------------------
@@ -1479,7 +1482,7 @@ def render_your_taste(
 
             st.plotly_chart(
                 decade_chart,
-                use_container_width=True,
+                width="stretch",
             )
 
     st.divider()
@@ -1542,7 +1545,7 @@ def render_your_taste(
 
                 st.plotly_chart(
                     country_chart,
-                    use_container_width=True,
+                    width="stretch",
                 )
 
     # -----------------------------------------------------
@@ -1597,7 +1600,7 @@ def render_your_taste(
 
                 st.plotly_chart(
                     language_chart,
-                    use_container_width=True,
+                    width="stretch",
                 )
 
     st.divider()
@@ -1693,7 +1696,7 @@ def render_your_taste(
         st.dataframe(
             favorite_display,
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
     with right:
@@ -1729,7 +1732,7 @@ def render_your_taste(
         st.dataframe(
             lowest_display,
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
     st.divider()
@@ -1845,7 +1848,7 @@ def render_your_taste(
 
             st.plotly_chart(
                 genre_rating_chart,
-                use_container_width=True,
+                width="stretch",
             )
 
     # -----------------------------------------------------
@@ -1953,7 +1956,7 @@ def render_your_taste(
 
             st.plotly_chart(
                 director_rating_chart,
-                use_container_width=True,
+                width="stretch",
             )
 
 # =========================================================
@@ -2118,15 +2121,15 @@ def render_you_vs_crowd(
         <style>
 
         .crowd-card {
-            background-color: #1F2A36;
-            border: 1px solid #2C3440;
+            background-color: #151A1E;
+            border: 1px solid #303A43;
             border-radius: 10px;
             padding: 18px;
             min-height: 115px;
         }
 
         .crowd-card-label {
-            color: #9AB0C3;
+            color: #A8B3BD;
             font-size: 14px;
             margin-bottom: 8px;
         }
@@ -2139,13 +2142,13 @@ def render_you_vs_crowd(
         }
 
         .crowd-card-small {
-            color: #9AB0C3;
+            color: #A8B3BD;
             font-size: 16px;
             font-weight: 400;
         }
 
         .chart-legend {
-            color: #9AB0C3;
+            color: #A8B3BD;
             font-size: 14px;
             margin-top: -5px;
             margin-bottom: 15px;
@@ -2425,7 +2428,7 @@ def render_you_vs_crowd(
 
             st.plotly_chart(
                 genre_chart,
-                use_container_width=True,
+                width="stretch",
             )
 
     st.divider()
@@ -2504,7 +2507,7 @@ def render_you_vs_crowd(
     st.dataframe(
         disagreement_display,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
     st.divider()
@@ -2616,7 +2619,7 @@ def render_you_vs_crowd(
 
             st.plotly_chart(
                 liked_chart,
-                use_container_width=True,
+                width="stretch",
             )
 
     # -----------------------------------------------------
@@ -2729,7 +2732,7 @@ def render_you_vs_crowd(
 
             st.plotly_chart(
                 disliked_chart,
-                use_container_width=True,
+                width="stretch",
             )
 
 # =========================================================
@@ -2853,7 +2856,7 @@ def render_recommendations(
                 if pd.notna(poster_path) and str(poster_path).strip():
                     st.image(
                         f"https://image.tmdb.org/t/p/w500{poster_path}",
-                        use_container_width=True,
+                        width="stretch",
                     )
                 else:
                     st.markdown(
@@ -2865,7 +2868,7 @@ def render_recommendations(
                             border-radius:8px;
                             display:flex; align-items:center;
                             justify-content:center;
-                            color:#C7D1DA; font-size:13px;">
+                            color:#A8B3BD; font-size:13px;">
                             Poster unavailable
                         </div>
                         """,
@@ -2935,7 +2938,7 @@ def render_recommendations(
         )
         st.plotly_chart(
             style_chart(decade_chart, show_legend=False),
-            use_container_width=True,
+            width="stretch",
         )
 
     st.divider()
@@ -2995,7 +2998,7 @@ def render_recommendations(
             )
             st.plotly_chart(
                 style_chart(hidden_chart, show_legend=False),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("Not enough popularity data to identify hidden gems.")
@@ -3051,7 +3054,7 @@ def render_recommendations(
             )
             st.plotly_chart(
                 style_chart(safe_chart, show_legend=False),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("No highly rated safe bets were found.")
@@ -3104,7 +3107,7 @@ def render_recommendations(
         )
         st.plotly_chart(
             style_chart(director_chart, show_legend=False),
-            use_container_width=True,
+            width="stretch",
         )
     else:
         st.info("Not enough director information is available.")
@@ -3576,7 +3579,7 @@ def render_history(
     st.dataframe(
         display,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         height=650,
         column_config={
             "Movie": st.column_config.TextColumn(
