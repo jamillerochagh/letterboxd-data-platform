@@ -12,7 +12,35 @@ RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 SAMPLE_DIR = DATA_DIR / "sample"
 
-TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+
+def get_secret(name: str):
+    """
+    Get configuration from:
+    1. Environment variables (.env locally / deployment env)
+    2. Streamlit secrets when running on Streamlit Cloud
+    """
+    value = os.getenv(name)
+
+    if value:
+        return value.strip()
+
+    try:
+        import streamlit as st
+
+        if name in st.secrets:
+            value = st.secrets[name]
+
+            if value:
+                return str(value).strip()
+
+    except Exception:
+        pass
+
+    return None
+
+
+TMDB_API_KEY = get_secret("TMDB_API_KEY")
+
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 
 ENRICHED_FILE = PROCESSED_DIR / "letterboxd_enriched.csv"
@@ -40,7 +68,7 @@ def validate_config():
     if not TMDB_API_KEY:
         raise ValueError(
             "TMDB_API_KEY not found. "
-            "Create a .env file based on .env.example."
+            "Configure TMDB_API_KEY in .env locally or in Streamlit Secrets."
         )
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
