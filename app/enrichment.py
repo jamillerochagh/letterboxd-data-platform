@@ -77,7 +77,11 @@ def enrich_movies(
                     title,
                     year,
                 )
-            except Exception:
+            except Exception as error:
+                print(
+                    f"TMDB ERROR | {title} ({year}) | "
+                    f"{type(error).__name__}: {error}"
+                )
                 metadata = {}
 
             if metadata.get("tmdb_id"):
