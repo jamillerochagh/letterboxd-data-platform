@@ -1,3 +1,4 @@
+import hashlib
 import sys
 from pathlib import Path
 
@@ -115,6 +116,36 @@ st.markdown(
         border-color: #2C3440;
     }
 
+
+
+    /* Strong contrast for Streamlit native controls */
+    [data-testid="stFileUploader"] { color: #FFFFFF !important; }
+    [data-testid="stFileUploader"] section {
+        background-color: #1F2A36 !important;
+        border: 1px dashed #52606D !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="stFileUploader"] section * { color: #FFFFFF !important; }
+    [data-testid="stFileUploader"] section small { color: #9AB0C3 !important; }
+    [data-testid="stFileUploader"] button {
+        background-color: #2C3440 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #52606D !important;
+    }
+    [data-testid="stFileUploaderFile"] {
+        background-color: #1F2A36 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #2C3440 !important;
+    }
+    [data-testid="stFileUploaderFile"] * { color: #FFFFFF !important; }
+    input { color: #FFFFFF !important; }
+    input::placeholder { color: #9AB0C3 !important; opacity: 1; }
+    [data-baseweb="input"] > div,
+    [data-baseweb="select"] > div {
+        background-color: #1F2A36 !important;
+        border-color: #2C3440 !important;
+        color: #FFFFFF !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -339,14 +370,19 @@ def calculate_hours_watched(
 
 def get_enriched_movies(
     watched: pd.DataFrame,
+    upload_fingerprint: str,
 ) -> pd.DataFrame:
 
-    if (
-        "enriched_movies"
-        not in st.session_state
-    ):
+    previous_fingerprint = st.session_state.get(
+        "upload_fingerprint"
+    )
 
-        progress = st.progress(0)
+    if previous_fingerprint != upload_fingerprint:
+        st.session_state.pop("enriched_movies", None)
+        st.session_state.pop("recommendations", None)
+        st.session_state["upload_fingerprint"] = upload_fingerprint
+
+    if "enriched_movies" not in st.session_state:
 
         with st.spinner(
             "Analyzing your movie history..."
@@ -354,18 +390,48 @@ def get_enriched_movies(
 
             enriched = enrich_movies(
                 watched,
-                progress_callback=progress.progress,
             )
 
-        progress.empty()
+            if enriched is None:
+                enriched = watched.copy()
 
-        st.session_state[
-            "enriched_movies"
-        ] = enriched
+            if not isinstance(enriched, pd.DataFrame):
+                enriched = pd.DataFrame(enriched)
 
-    return st.session_state[
-        "enriched_movies"
-    ]
+            expected_columns = {
+                "tmdb_id": pd.NA,
+                "director": pd.NA,
+                "genre_primary": pd.NA,
+                "genre_secondary": pd.NA,
+                "genre_tertiary": pd.NA,
+                "country_primary": pd.NA,
+                "original_language": pd.NA,
+                "runtime_min": pd.NA,
+                "vote_average": pd.NA,
+                "popularity": pd.NA,
+                "tagline": pd.NA,
+                "overview": pd.NA,
+                "poster_path": pd.NA,
+            }
+
+            for column, default_value in expected_columns.items():
+                if column not in enriched.columns:
+                    enriched[column] = default_value
+
+            for column in [
+                "tmdb_id",
+                "runtime_min",
+                "vote_average",
+                "popularity",
+            ]:
+                enriched[column] = pd.to_numeric(
+                    enriched[column],
+                    errors="coerce",
+                )
+
+            st.session_state["enriched_movies"] = enriched
+
+    return st.session_state["enriched_movies"]
 
 
 # =========================================================
@@ -844,6 +910,14 @@ def render_your_taste(
         enriched,
         ratings,
         likes,
+    )
+
+    if "vote_average" not in data.columns:
+        data["vote_average"] = pd.NA
+
+    data["vote_average"] = pd.to_numeric(
+        data["vote_average"],
+        errors="coerce",
     )
 
     data["runtime_numeric"] = pd.to_numeric(
@@ -1903,6 +1977,18 @@ def render_you_vs_crowd(
 
     data = enriched.copy()
 
+    if (
+        "vote_average" not in data.columns
+        or data["vote_average"].isna().all()
+    ):
+
+        st.info(
+            "TMDB ratings are not available for enough "
+            "movies to build this comparison."
+        )
+
+        return
+
     if ratings.empty:
         st.info("No Letterboxd ratings were found.")
         return
@@ -2662,848 +2748,367 @@ def render_recommendations(
         "directors, countries, languages and decades."
     )
 
-    if recommendations.empty:
-
-        st.info(
-            "No recommendations were found."
-        )
-
+    if recommendations is None or recommendations.empty:
+        st.info("No recommendations were found.")
         return
-
-    # =====================================================
-    # PREPARE DATA
-    # =====================================================
 
     data = recommendations.copy()
 
-    data["taste_match_score"] = pd.to_numeric(
-        data.get(
-            "taste_match_score",
-            pd.Series(
-                index=data.index,
-                dtype=float,
-            ),
-        ),
-        errors="coerce",
-    )
+    expected_columns = {
+        "title": pd.NA,
+        "Year": pd.NA,
+        "director": pd.NA,
+        "genre_primary": pd.NA,
+        "country_primary": pd.NA,
+        "vote_average": pd.NA,
+        "popularity": pd.NA,
+        "poster_path": pd.NA,
+        "taste_match_score": pd.NA,
+    }
 
-    data["vote_average"] = pd.to_numeric(
-        data.get(
-            "vote_average",
-            pd.Series(
-                index=data.index,
-                dtype=float,
-            ),
-        ),
-        errors="coerce",
-    )
+    for column, default_value in expected_columns.items():
+        if column not in data.columns:
+            data[column] = default_value
 
-    data["popularity"] = pd.to_numeric(
-        data.get(
-            "popularity",
-            pd.Series(
-                index=data.index,
-                dtype=float,
-            ),
-        ),
-        errors="coerce",
-    )
-
-    data["Year"] = pd.to_numeric(
-        data.get(
-            "Year",
-            pd.Series(
-                index=data.index,
-                dtype=float,
-            ),
-        ),
-        errors="coerce",
-    )
+    for column in [
+        "taste_match_score",
+        "vote_average",
+        "popularity",
+        "Year",
+    ]:
+        data[column] = pd.to_numeric(
+            data[column],
+            errors="coerce",
+        )
 
     data["decade"] = (
         (data["Year"] // 10) * 10
     ).astype("Int64")
 
-    # =====================================================
-    # SUMMARY CARDS
-    # =====================================================
-
-    best_match = (
-        data["taste_match_score"]
-        .max()
+    best_match = data["taste_match_score"].max()
+    valid_genres = data["genre_primary"].replace("", pd.NA).dropna()
+    top_genre = (
+        valid_genres.value_counts().index[0]
+        if not valid_genres.empty
+        else "N/A"
     )
-
-    average_match = (
-        data["taste_match_score"]
-        .mean()
+    valid_decades = data["decade"].dropna()
+    top_decade = (
+        f"{int(valid_decades.value_counts().index[0])}s"
+        if not valid_decades.empty
+        else "N/A"
     )
-
-    top_genre = "N/A"
-
-    if "genre_primary" in data.columns:
-
-        valid_genres = (
-            data["genre_primary"]
-            .replace("", pd.NA)
-            .dropna()
-        )
-
-        if not valid_genres.empty:
-
-            top_genre = (
-                valid_genres
-                .value_counts()
-                .index[0]
-            )
-
-    top_decade = "N/A"
-
-    valid_decades = (
-        data["decade"]
-        .dropna()
-    )
-
-    if not valid_decades.empty:
-
-        decade_value = (
-            valid_decades
-            .value_counts()
-            .index[0]
-        )
-
-        top_decade = (
-            f"{int(decade_value)}s"
-        )
 
     col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric(
-        "Recommendations",
-        len(data),
-    )
-
+    col1.metric("Recommendations", len(data))
     col2.metric(
-        "Best Match",
-        (
-            f"{best_match:.0f}/100"
-            if pd.notna(best_match)
-            else "N/A"
-        ),
+        "Best Taste Score",
+        f"{best_match:.0f}/100" if pd.notna(best_match) else "N/A",
     )
-
-    col3.metric(
-        "Most Recommended Genre",
-        top_genre,
-    )
-
-    col4.metric(
-        "Most Recommended Decade",
-        top_decade,
-    )
+    col3.metric("Most Recommended Genre", top_genre)
+    col4.metric("Most Recommended Decade", top_decade)
 
     st.divider()
-
-        # =====================================================
-    # TOP RECOMMENDATIONS
-    # =====================================================
-
     st.subheader("Top Recommendations")
-
     st.caption(
-        "Your highest-ranked movies based on your personal taste profile."
+        "Taste Score is a content-based recommendation heuristic, "
+        "not a probability."
     )
 
     top_recommendations = (
-        data
-        .sort_values(
+        data.sort_values(
             ["taste_match_score", "vote_average"],
             ascending=[False, False],
+            na_position="last",
         )
         .head(12)
         .copy()
     )
 
-    # Styling only for the text below each poster
-    st.markdown(
-        """
-        <style>
-        .recommendation-title {
-            color: #FFFFFF;
-            font-size: 16px;
-            font-weight: 600;
-            line-height: 1.25;
-            margin-top: 7px;
-            margin-bottom: 3px;
-        }
+    for start_index in range(0, len(top_recommendations), 4):
+        row = top_recommendations.iloc[start_index:start_index + 4]
+        columns = st.columns(4, gap="medium")
 
-        .recommendation-info {
-            color: #9AB0C3;
-            font-size: 13px;
-            margin-bottom: 3px;
-        }
-
-        .recommendation-match {
-            color: #00E054;
-            font-size: 14px;
-            font-weight: 600;
-        }
-
-        .recommendation-tmdb {
-            color: #9AB0C3;
-            font-size: 12px;
-            margin-top: 1px;
-            margin-bottom: 22px;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # =====================================================
-    # 4 MOVIES PER ROW
-    # =====================================================
-
-    for start in range(
-        0,
-        len(top_recommendations),
-        4,
-    ):
-
-        row = top_recommendations.iloc[
-            start:start + 4
-        ]
-
-        columns = st.columns(
-            4,
-            gap="medium",
-        )
-
-        for column, (_, movie) in zip(
-            columns,
-            row.iterrows(),
-        ):
-
+        for column, (_, movie) in zip(columns, row.iterrows()):
             with column:
-
-                # -----------------------------------------
-                # TITLE
-                # -----------------------------------------
-
-                title = movie.get(
-                    "title",
-                    "Unknown Movie",
+                title = movie.get("title")
+                title = (
+                    str(title)
+                    if pd.notna(title) and str(title).strip()
+                    else "Unknown Movie"
                 )
-
-                if pd.isna(title):
-                    title = "Unknown Movie"
-
-                title = str(title)
-
-                # -----------------------------------------
-                # YEAR
-                # -----------------------------------------
 
                 year = movie.get("Year")
+                year_text = str(int(year)) if pd.notna(year) else ""
 
-                if pd.notna(year):
-
-                    try:
-                        year_text = str(
-                            int(float(year))
-                        )
-
-                    except (
-                        ValueError,
-                        TypeError,
-                    ):
-                        year_text = ""
-
-                else:
-                    year_text = ""
-
-                # -----------------------------------------
-                # GENRE
-                # -----------------------------------------
-
-                genre = movie.get(
-                    "genre_primary",
-                    "",
+                genre = movie.get("genre_primary")
+                genre_text = (
+                    str(genre)
+                    if pd.notna(genre) and str(genre).strip()
+                    else ""
                 )
 
-                if pd.isna(genre):
-                    genre = ""
+                poster_path = movie.get("poster_path")
 
-                genre = str(genre)
-
-                # -----------------------------------------
-                # MATCH
-                # -----------------------------------------
-
-                match = movie.get(
-                    "taste_match_score"
-                )
-
-                if pd.notna(match):
-
-                    match_text = (
-                        f"Taste Score · {float(match):.0f}/100"
-                    )
-
-                else:
-
-                    match_text = (
-                        "Match unavailable"
-                    )
-
-                # -----------------------------------------
-                # TMDB RATING
-                # -----------------------------------------
-
-                tmdb_rating = movie.get(
-                    "vote_average"
-                )
-
-                if pd.notna(tmdb_rating):
-
-                    tmdb_text = (
-                        f"TMDB "
-                        f"{float(tmdb_rating):.1f}/10"
-                    )
-
-                else:
-
-                    tmdb_text = (
-                        "TMDB rating unavailable"
-                    )
-
-                # -----------------------------------------
-                # POSTER
-                # -----------------------------------------
-
-                poster_path = movie.get(
-                    "poster_path",
-                    "",
-                )
-
-                has_poster = (
-                    pd.notna(poster_path)
-                    and str(
-                        poster_path
-                    ).strip() != ""
-                )
-
-                if has_poster:
-
-                    poster_url = (
-                        "https://image.tmdb.org/"
-                        "t/p/w500"
-                        f"{poster_path}"
-                    )
-
+                if pd.notna(poster_path) and str(poster_path).strip():
                     st.image(
-                        poster_url,
+                        f"https://image.tmdb.org/t/p/w500{poster_path}",
                         use_container_width=True,
                     )
-
                 else:
-
-                    # Keeps approximately the same space
-                    # when a movie has no poster.
-
                     st.markdown(
                         """
                         <div style="
-                            width:100%;
-                            aspect-ratio:2/3;
+                            width:100%; aspect-ratio:2/3;
                             background:#1F2A36;
                             border:1px solid #2C3440;
                             border-radius:8px;
-                            display:flex;
-                            align-items:center;
+                            display:flex; align-items:center;
                             justify-content:center;
-                            color:#9AB0C3;
-                            font-size:13px;
-                        ">
+                            color:#C7D1DA; font-size:13px;">
                             Poster unavailable
                         </div>
                         """,
                         unsafe_allow_html=True,
                     )
 
-                # -----------------------------------------
-                # INFORMATION
-                # -----------------------------------------
-
-                info_parts = []
-
-                if year_text:
-                    info_parts.append(
-                        year_text
-                    )
-
-                if genre:
-                    info_parts.append(
-                        genre
-                    )
-
-                movie_info = (
-                    " · ".join(
-                        info_parts
-                    )
+                info = " · ".join(
+                    value for value in [year_text, genre_text] if value
                 )
-
-                # Use separate markdown calls so Streamlit
-                # doesn't interpret the card as code.
+                match = movie.get("taste_match_score")
+                tmdb_rating = movie.get("vote_average")
 
                 st.markdown(
-                    f'<div class="recommendation-title">'
-                    f'{title}'
-                    f'</div>',
+                    f'<div class="recommendation-title">{title}</div>',
                     unsafe_allow_html=True,
                 )
-
                 st.markdown(
-                    f'<div class="recommendation-info">'
-                    f'{movie_info}'
-                    f'</div>',
+                    f'<div class="recommendation-info">{info}</div>',
                     unsafe_allow_html=True,
                 )
-
                 st.markdown(
-                    f'<div class="recommendation-match">'
-                    f'{match_text}'
-                    f'</div>',
+                    '<div class="recommendation-match">'
+                    + (
+                        f"Taste Score · {float(match):.0f}/100"
+                        if pd.notna(match)
+                        else "Taste Score unavailable"
+                    )
+                    + '</div>',
                     unsafe_allow_html=True,
                 )
-
                 st.markdown(
-                    f'<div class="recommendation-tmdb">'
-                    f'{tmdb_text}'
-                    f'</div>',
+                    '<div class="recommendation-tmdb">'
+                    + (
+                        f"TMDB {float(tmdb_rating):.1f}/10"
+                        if pd.notna(tmdb_rating)
+                        else "TMDB rating unavailable"
+                    )
+                    + '</div>',
                     unsafe_allow_html=True,
                 )
 
     st.divider()
- 
-
-    # =====================================================
-    # RECOMMENDATIONS BY DECADE
-    # =====================================================
-
-    st.subheader(
-        "Recommendations by Decade"
-    )
-
-    st.caption(
-        "How your current recommendations are distributed across film eras."
-    )
+    st.subheader("Recommendations by Decade")
 
     decade_data = (
-        data["decade"]
-        .dropna()
-        .astype(int)
-        .value_counts()
-        .sort_index()
+        data["decade"].dropna().astype(int)
+        .value_counts().sort_index()
         .rename_axis("Decade")
         .reset_index(name="Movies")
     )
 
     if not decade_data.empty:
-
-        decade_data["Decade"] = (
-            decade_data["Decade"]
-            .astype(str)
-            + "s"
-        )
-
+        decade_data["Decade"] = decade_data["Decade"].astype(str) + "s"
         decade_chart = px.bar(
             decade_data,
             x="Decade",
             y="Movies",
             text="Movies",
-            color_discrete_sequence=[
-                BLUE
-            ],
+            color_discrete_sequence=[BLUE],
         )
-
-        decade_chart.update_traces(
-            textposition="outside",
-            cliponaxis=False,
-        )
-
+        decade_chart.update_traces(textposition="outside", cliponaxis=False)
         decade_chart.update_layout(
             showlegend=False,
             xaxis_title=None,
             yaxis_title="Recommendations",
             height=420,
-            margin={
-                "l": 30,
-                "r": 30,
-                "t": 25,
-                "b": 40,
-            },
         )
-
-        decade_chart = style_chart(
-            decade_chart,
-            show_legend=False,
-        )
-
         st.plotly_chart(
-            decade_chart,
+            style_chart(decade_chart, show_legend=False),
             use_container_width=True,
         )
 
     st.divider()
-
-    # =====================================================
-    # HIDDEN GEMS + SAFE BETS
-    # =====================================================
-
     left, right = st.columns(2)
 
-    # -----------------------------------------------------
-    # HIDDEN GEMS
-    # -----------------------------------------------------
-
     with left:
+        st.subheader("Hidden Gems")
+        st.caption("Strong taste scores with lower TMDB popularity.")
 
-        st.subheader(
-            "Hidden Gems"
-        )
-
-        st.caption(
-            "Strong taste matches with lower TMDB popularity."
-        )
-
-        valid_popularity = (
-            data["popularity"]
-            .dropna()
-        )
-
+        valid_popularity = data["popularity"].dropna()
         if not valid_popularity.empty:
-
-            popularity_median = (
-                valid_popularity.median()
-            )
-
+            popularity_median = valid_popularity.median()
             hidden_gems = (
                 data[
                     data["popularity"].notna()
-                    & (
-                        data["popularity"]
-                        <= popularity_median
-                    )
+                    & (data["popularity"] <= popularity_median)
+                    & data["taste_match_score"].notna()
                 ]
                 .sort_values(
-                    [
-                        "taste_match_score",
-                        "vote_average",
-                    ],
-                    ascending=[
-                        False,
-                        False,
-                    ],
+                    ["taste_match_score", "vote_average"],
+                    ascending=[False, False],
+                    na_position="last",
                 )
                 .head(8)
                 .copy()
             )
-
         else:
-
             hidden_gems = pd.DataFrame()
 
         if not hidden_gems.empty:
-
-            hidden_gems[
-                "Match Label"
-            ] = (
-                hidden_gems[
-                    "taste_match_score"
-                ]
-                .map(
-                    lambda value:
-                    f"{value:.0f}%"
-                )
+            hidden_gems["Score Label"] = hidden_gems["taste_match_score"].map(
+                lambda value: f"{value:.0f}/100"
             )
-
             hidden_chart = px.bar(
                 hidden_gems,
                 x="taste_match_score",
                 y="title",
                 orientation="h",
-                text="Match Label",
-                color_discrete_sequence=[
-                    GREEN
-                ],
+                text="Score Label",
+                color_discrete_sequence=[GREEN],
             )
-
             hidden_chart.update_traces(
                 textposition="inside",
                 insidetextanchor="end",
-                textfont={
-                    "color": TEXT,
-                    "size": 12,
-                },
+                textfont={"color": TEXT, "size": 12},
             )
-
-            hidden_chart.update_layout(
-                showlegend=False,
-                xaxis_title="Taste Match",
-                yaxis_title=None,
-                height=460,
-                margin={
-                    "l": 160,
-                    "r": 20,
-                    "t": 15,
-                    "b": 40,
-                },
-            )
-
+            hidden_chart.update_xaxes(range=[0, 100])
             hidden_chart.update_yaxes(
-                categoryorder=
-                "total ascending",
+                categoryorder="total ascending",
                 automargin=True,
             )
-
-            hidden_chart = style_chart(
-                hidden_chart,
-                show_legend=False,
+            hidden_chart.update_layout(
+                showlegend=False,
+                xaxis_title="Taste Score",
+                yaxis_title=None,
+                height=460,
             )
-
             st.plotly_chart(
-                hidden_chart,
+                style_chart(hidden_chart, show_legend=False),
                 use_container_width=True,
             )
-
         else:
-
-            st.info(
-                "Not enough popularity data to identify hidden gems."
-            )
-
-    # -----------------------------------------------------
-    # SAFE BETS
-    # -----------------------------------------------------
+            st.info("Not enough popularity data to identify hidden gems.")
 
     with right:
-
-        st.subheader(
-            "Safe Bets"
-        )
-
+        st.subheader("Safe Bets")
         st.caption(
-            "Strong matches that are also highly rated by TMDB users."
+            "Strong taste scores that are also highly rated by TMDB users."
         )
 
         safe_bets = (
             data[
                 data["vote_average"].notna()
-                & (
-                    data["vote_average"] >= 7
-                )
+                & (data["vote_average"] >= 7)
+                & data["taste_match_score"].notna()
             ]
             .sort_values(
-                [
-                    "taste_match_score",
-                    "vote_average",
-                ],
-                ascending=[
-                    False,
-                    False,
-                ],
+                ["taste_match_score", "vote_average"],
+                ascending=[False, False],
+                na_position="last",
             )
             .head(8)
             .copy()
         )
 
         if not safe_bets.empty:
-
-            safe_bets[
-                "Match Label"
-            ] = (
-                safe_bets[
-                    "taste_match_score"
-                ]
-                .map(
-                    lambda value:
-                    f"{value:.0f}%"
-                )
+            safe_bets["Score Label"] = safe_bets["taste_match_score"].map(
+                lambda value: f"{value:.0f}/100"
             )
-
             safe_chart = px.bar(
                 safe_bets,
                 x="taste_match_score",
                 y="title",
                 orientation="h",
-                text="Match Label",
-                color_discrete_sequence=[
-                    ORANGE
-                ],
+                text="Score Label",
+                color_discrete_sequence=[ORANGE],
             )
-
             safe_chart.update_traces(
                 textposition="inside",
                 insidetextanchor="end",
-                textfont={
-                    "color": TEXT,
-                    "size": 12,
-                },
+                textfont={"color": TEXT, "size": 12},
             )
-
-            safe_chart.update_layout(
-                showlegend=False,
-                xaxis_title="Taste Match",
-                yaxis_title=None,
-                height=460,
-                margin={
-                    "l": 160,
-                    "r": 20,
-                    "t": 15,
-                    "b": 40,
-                },
-            )
-
+            safe_chart.update_xaxes(range=[0, 100])
             safe_chart.update_yaxes(
-                categoryorder=
-                "total ascending",
+                categoryorder="total ascending",
                 automargin=True,
             )
-
-            safe_chart = style_chart(
-                safe_chart,
-                show_legend=False,
+            safe_chart.update_layout(
+                showlegend=False,
+                xaxis_title="Taste Score",
+                yaxis_title=None,
+                height=460,
             )
-
             st.plotly_chart(
-                safe_chart,
+                style_chart(safe_chart, show_legend=False),
                 use_container_width=True,
             )
-
         else:
-
-            st.info(
-                "No highly rated safe bets were found."
-            )
+            st.info("No highly rated safe bets were found.")
 
     st.divider()
-
-    # =====================================================
-    # DIRECTORS WORTH DISCOVERING
-    # =====================================================
-
-    st.subheader(
-        "Directors Worth Discovering"
-    )
-
+    st.subheader("Directors Worth Discovering")
     st.caption(
         "Directors appearing repeatedly among your personalized recommendations."
     )
 
-    if "director" in data.columns:
+    director_data = data.copy()
+    director_data["director"] = director_data["director"].replace("", pd.NA)
 
-        director_data = data.copy()
-
-        director_data["director"] = (
-            director_data["director"]
-            .replace("", pd.NA)
+    director_summary = (
+        director_data.dropna(subset=["director"])
+        .groupby("director")
+        .agg(
+            Recommendations=("title", "count"),
+            Average_Match=("taste_match_score", "mean"),
+            Average_TMDB=("vote_average", "mean"),
         )
-
-        director_summary = (
-            director_data
-            .dropna(
-                subset=["director"]
-            )
-            .groupby(
-                "director"
-            )
-            .agg(
-                Recommendations=(
-                    "title",
-                    "count",
-                ),
-                Average_Match=(
-                    "taste_match_score",
-                    "mean",
-                ),
-                Average_TMDB=(
-                    "vote_average",
-                    "mean",
-                ),
-            )
-            .reset_index()
+        .reset_index()
+        .sort_values(
+            ["Recommendations", "Average_Match"],
+            ascending=[False, False],
         )
+        .head(10)
+    )
 
-        director_summary = (
-            director_summary
-            .sort_values(
-                [
-                    "Recommendations",
-                    "Average_Match",
-                ],
-                ascending=[
-                    False,
-                    False,
-                ],
-            )
-            .head(10)
+    if not director_summary.empty:
+        director_summary["Label"] = director_summary["Recommendations"].astype(str)
+        director_chart = px.bar(
+            director_summary,
+            x="Recommendations",
+            y="director",
+            orientation="h",
+            text="Label",
+            color_discrete_sequence=[BLUE],
         )
+        director_chart.update_traces(textposition="outside", cliponaxis=False)
+        director_chart.update_yaxes(
+            categoryorder="total ascending",
+            automargin=True,
+        )
+        director_chart.update_layout(
+            showlegend=False,
+            xaxis_title="Recommended Movies",
+            yaxis_title=None,
+            height=500,
+        )
+        st.plotly_chart(
+            style_chart(director_chart, show_legend=False),
+            use_container_width=True,
+        )
+    else:
+        st.info("Not enough director information is available.")
 
-        if not director_summary.empty:
-
-            director_summary[
-                "Label"
-            ] = (
-                director_summary[
-                    "Recommendations"
-                ]
-                .astype(str)
-            )
-
-            director_chart = px.bar(
-                director_summary,
-                x="Recommendations",
-                y="director",
-                orientation="h",
-                text="Label",
-                color_discrete_sequence=[
-                    BLUE
-                ],
-            )
-
-            director_chart.update_traces(
-                textposition="outside",
-                cliponaxis=False,
-            )
-
-            director_chart.update_layout(
-                showlegend=False,
-                xaxis_title="Recommended Movies",
-                yaxis_title=None,
-                height=500,
-                margin={
-                    "l": 40,
-                    "r": 40,
-                    "t": 20,
-                    "b": 40,
-                },
-            )
-
-            director_chart.update_yaxes(
-                categoryorder=
-                "total ascending",
-                automargin=True,
-            )
-
-            director_chart = style_chart(
-                director_chart,
-                show_legend=False,
-            )
-
-            st.plotly_chart(
-                director_chart,
-                use_container_width=True,
-            )
 
 # =========================================================
 # HISTORY
@@ -4049,6 +3654,12 @@ else:
 
     try:
 
+        upload_bytes = uploaded_file.getvalue()
+        upload_fingerprint = hashlib.sha256(
+            upload_bytes
+        ).hexdigest()
+        uploaded_file.seek(0)
+
         temp_dir = (
             extract_letterboxd_zip(
                 uploaded_file
@@ -4097,7 +3708,8 @@ else:
 
         enriched = (
             get_enriched_movies(
-                watched
+                watched,
+                upload_fingerprint,
             )
         )
 
