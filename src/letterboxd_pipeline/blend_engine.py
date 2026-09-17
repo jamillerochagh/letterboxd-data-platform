@@ -188,8 +188,11 @@ def get_movies_in_common(
                         "release_year"
                     ),
                 ),
-                "poster_path": creator_row.get(
-                    "poster_path"
+                "poster_path": (
+                    creator_row.get("poster_path")
+                    if pd.notna(creator_row.get("poster_path"))
+                    and str(creator_row.get("poster_path")).strip()
+                    else friend_row.get("poster_path")
                 ),
                 "creator_rating": creator_rating,
                 "friend_rating": friend_rating,
@@ -480,11 +483,9 @@ def get_shared_top_preference(
 
 def get_movies_both_love(
     common_movies: pd.DataFrame,
-    limit: int = 10,
+    limit: int = 50,
 ) -> pd.DataFrame:
-    """
-    Movies both users rated highly or liked.
-    """
+    """Return movies both users rated exactly 5.0."""
     if common_movies is None or common_movies.empty:
         return pd.DataFrame()
 
@@ -500,54 +501,55 @@ def get_movies_both_love(
         errors="coerce",
     )
 
-    creator_liked = (
-        result["creator_liked"]
-        .fillna(False)
-        .astype(bool)
-    )
-
-    friend_liked = (
-        result["friend_liked"]
-        .fillna(False)
-        .astype(bool)
-    )
-
     result = result[
-        (
-            (creator_rating >= 4.0)
-            | creator_liked
-        )
-        & (
-            (friend_rating >= 4.0)
-            | friend_liked
-        )
+        creator_rating.eq(5.0)
+        & friend_rating.eq(5.0)
     ].copy()
 
     if result.empty:
         return result
 
-    result["shared_rating"] = (
-        creator_rating.loc[result.index]
-        .fillna(4.0)
-        + friend_rating.loc[result.index]
-        .fillna(4.0)
-    ) / 2
-
     return (
         result
-        .sort_values(
-            [
-                "shared_rating",
-                "rating_gap",
-            ],
-            ascending=[
-                False,
-                True,
-            ],
-        )
+        .sort_values("title")
         .head(limit)
         .reset_index(drop=True)
     )
+
+def get_shared_preferences(
+    creator_profile: dict,
+    friend_profile: dict,
+) -> dict:
+    """
+    Return the strongest shared preference for each
+    relevant taste attribute.
+    """
+
+    attributes = [
+        "genre_primary",
+        "genre_secondary",
+        "director",
+        "country_primary",
+        "original_language",
+        "decade",
+    ]
+
+    shared_preferences = {}
+
+    for attribute in attributes:
+
+        value = get_shared_top_preference(
+            creator_profile,
+            friend_profile,
+            attribute,
+        )
+
+        if value is not None:
+            shared_preferences[
+                attribute
+            ] = value
+
+    return shared_preferences
 
 
 # =========================================================
@@ -754,18 +756,24 @@ def rank_blend_candidates(
         axis=1,
     )
 
-    # Geometric mean prevents a movie that strongly
-    # matches only one user from dominating the ranking.
+    creator_scores = result["creator_match_score"].astype(float)
+    friend_scores = result["friend_match_score"].astype(float)
+    score_sum = creator_scores + friend_scores
 
-    result["blend_score"] = (
-        result["creator_match_score"]
-        * result["friend_match_score"]
-    ) ** 0.5
-
-    result["blend_score"] = (
-        result["blend_score"]
-        .round(1)
+    harmonic_mean = (
+        2.0 * creator_scores * friend_scores
+        / score_sum.where(score_sum > 0, 1.0)
     )
+    weaker_match = pd.concat([creator_scores, friend_scores], axis=1).min(axis=1)
+    rating_balance = (100.0 - (creator_scores - friend_scores).abs()).clip(0.0, 100.0)
+
+    # Consensus-oriented Blend: favor movies that are strong for both users,
+    # not merely exceptional for one profile.
+    result["blend_score"] = (
+        0.55 * harmonic_mean
+        + 0.35 * weaker_match
+        + 0.10 * rating_balance
+    ).clip(0.0, 100.0).round(1)
 
     result = result[
         (
@@ -890,6 +898,12 @@ def build_blend_analysis(
         ),
         "attribute_matches": (
             attribute_matches
+        ),
+        "shared_preferences": (
+            get_shared_preferences(
+                creator_profile,
+                friend_profile,
+            )
         ),
         "creator_profile": (
             creator_profile

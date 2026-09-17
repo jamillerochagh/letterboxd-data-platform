@@ -7,11 +7,46 @@ from sqlalchemy import text
 
 from .database import get_engine
 
-
 def _json_safe(value):
-    """Convert pandas/numpy values into JSON-safe Python values."""
-    if value is None:
+    """
+    Recursively convert pandas/numpy objects into values
+    that can safely be serialized as JSON.
+    """
+    import numpy as np
+
+    if isinstance(value, dict):
+        safe_dict = {}
+
+        for key, item in value.items():
+            # JSON object keys must be native strings.
+            safe_key = str(key)
+
+            safe_dict[safe_key] = _json_safe(item)
+
+        return safe_dict
+
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+
+    if isinstance(value, np.integer):
+        return int(value)
+
+    if isinstance(value, np.floating):
+        if np.isnan(value):
+            return None
+        return float(value)
+
+    if isinstance(value, np.bool_):
+        return bool(value)
+
+    if value is pd.NA:
         return None
+
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+
+    if isinstance(value, datetime):
+        return value.isoformat()
 
     try:
         if pd.isna(value):
@@ -19,30 +54,21 @@ def _json_safe(value):
     except (TypeError, ValueError):
         pass
 
-    if hasattr(value, "item"):
-        try:
-            return value.item()
-        except (ValueError, TypeError):
-            pass
-
-    if isinstance(value, pd.Timestamp):
-        return value.isoformat()
-
     return value
 
-
-def dataframe_to_records(df: pd.DataFrame) -> list[dict]:
+def dataframe_to_records(
+    df: pd.DataFrame,
+) -> list[dict]:
     """Convert a DataFrame into JSON-safe records."""
+
     if df is None or df.empty:
         return []
 
-    clean = df.copy()
+    records = df.to_dict(
+        orient="records"
+    )
 
-    for column in clean.columns:
-        clean[column] = clean[column].map(_json_safe)
-
-    return clean.to_dict(orient="records")
-
+    return _json_safe(records)
 
 def create_blend(creator_name: str | None = None) -> str:
     """
@@ -143,14 +169,20 @@ def save_blend_profile(
 
     movie_records = dataframe_to_records(movie_history)
 
+    safe_taste_profile = _json_safe(
+        taste_profile
+    )
+
+    safe_movie_records = _json_safe(
+        movie_records
+    )
+
     profile_json = json.dumps(
-        taste_profile,
-        default=_json_safe,
+        safe_taste_profile
     )
 
     history_json = json.dumps(
-        movie_records,
-        default=_json_safe,
+        safe_movie_records
     )
 
     profile_query = text(

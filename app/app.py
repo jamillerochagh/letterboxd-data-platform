@@ -37,6 +37,10 @@ from src.letterboxd_pipeline.tmdb import (
     enrich_candidate_catalog,
 )
 
+from blend_ui import (
+    render_blend_invitation,
+    render_create_blend,
+)
 
 # =========================================================
 # PAGE CONFIG
@@ -130,10 +134,44 @@ st.markdown(
         border:1px solid var(--lb-border); border-radius:10px; overflow:hidden;
     }
 
-    input { color:var(--lb-text)!important; }
-    input::placeholder { color:var(--lb-muted)!important; opacity:1; }
-    [data-baseweb="input"]>div,[data-baseweb="select"]>div {
-        background:var(--lb-surface-2)!important; border-color:var(--lb-border)!important;
+    /* TEXT INPUTS */
+
+    [data-testid="stTextInput"] input {
+        background-color:var(--lb-surface-2)!important;
+        color:var(--lb-text)!important;
+        -webkit-text-fill-color:var(--lb-text)!important;
+        caret-color:var(--lb-green)!important;
+    }
+
+    [data-testid="stTextInput"] input:focus {
+        background-color:var(--lb-surface-2)!important;
+        color:var(--lb-text)!important;
+        -webkit-text-fill-color:var(--lb-text)!important;
+    }
+
+    [data-testid="stTextInput"] input::placeholder {
+        color:var(--lb-muted)!important;
+        -webkit-text-fill-color:var(--lb-muted)!important;
+        opacity:1!important;
+    }
+
+    [data-testid="stTextInput"] > div > div {
+        background-color:var(--lb-surface-2)!important;
+        border-color:var(--lb-border)!important;
+    }
+
+    [data-baseweb="input"] {
+        background-color:var(--lb-surface-2)!important;
+    }
+
+    [data-baseweb="input"] > div {
+        background-color:var(--lb-surface-2)!important;
+        border-color:var(--lb-border)!important;
+    }
+
+    [data-baseweb="select"] > div {
+        background:var(--lb-surface-2)!important;
+        border-color:var(--lb-border)!important;
         color:var(--lb-text)!important;
     }
     hr { border-color:var(--lb-border)!important; }
@@ -374,6 +412,7 @@ def calculate_hours_watched(
 def get_enriched_movies(
     watched: pd.DataFrame,
     upload_fingerprint: str,
+    progress_callback=None,
 ) -> pd.DataFrame:
 
     previous_fingerprint = st.session_state.get(
@@ -387,12 +426,9 @@ def get_enriched_movies(
 
     if "enriched_movies" not in st.session_state:
 
-        with st.spinner(
-            "Analyzing your movie history..."
-        ):
-
             enriched = enrich_movies(
                 watched,
+                progress_callback=progress_callback,
             )
 
             if enriched is None:
@@ -470,15 +506,15 @@ def get_recommendations(
 
             preferred_genres = list(
                 profile.get(
-                    "genre_primary",
-                    {},
+                    "genre_combined",
+                    profile.get("genre_primary", {}),
                 ).keys()
             )
 
             candidates = (
                 build_candidate_catalog(
                     preferred_genres,
-                    pages_per_genre=2,
+                    pages_per_genre=4,
                 )
             )
 
@@ -3613,6 +3649,18 @@ def render_history(
 # MAIN APP
 # =========================================================
 
+blend_id = st.query_params.get(
+    "blend"
+)
+
+if blend_id:
+
+    render_blend_invitation(
+        blend_id
+    )
+
+    st.stop()
+
 st.title(
     "Letterboxd Analytics"
 )
@@ -3657,11 +3705,54 @@ else:
 
     try:
 
+        # -------------------------------------------------
+        # ANALYSIS PROGRESS
+        # -------------------------------------------------
+
+        analysis_progress = st.progress(
+            0,
+            text="Reading your Letterboxd export... 0%",
+        )
+
+        def set_analysis_progress(
+            percentage: int,
+            message: str,
+        ):
+            percentage = max(
+                0,
+                min(int(percentage), 100),
+            )
+
+            analysis_progress.progress(
+                percentage,
+                text=f"{message} {percentage}%",
+            )
+
+        # -------------------------------------------------
+        # READ UPLOAD
+        # -------------------------------------------------
+
+        set_analysis_progress(
+            5,
+            "Reading your Letterboxd export...",
+        )
+
         upload_bytes = uploaded_file.getvalue()
+
         upload_fingerprint = hashlib.sha256(
             upload_bytes
         ).hexdigest()
+
         uploaded_file.seek(0)
+
+        # -------------------------------------------------
+        # EXTRACT EXPORT
+        # -------------------------------------------------
+
+        set_analysis_progress(
+            10,
+            "Extracting your Letterboxd data...",
+        )
 
         temp_dir = (
             extract_letterboxd_zip(
@@ -3675,6 +3766,15 @@ else:
             )
         )
 
+        # -------------------------------------------------
+        # LOAD DATA
+        # -------------------------------------------------
+
+        set_analysis_progress(
+            15,
+            "Loading your movie history...",
+        )
+
         data = (
             load_letterboxd_data(
                 export_dir
@@ -3684,6 +3784,15 @@ else:
         watched = data[
             "watched"
         ]
+
+        # -------------------------------------------------
+        # PREPARE DATA
+        # -------------------------------------------------
+
+        set_analysis_progress(
+            20,
+            "Preparing ratings and diary...",
+        )
 
         ratings = prepare_ratings(
             data[
@@ -3706,14 +3815,45 @@ else:
         ]
 
         # -------------------------------------------------
-        # AUTOMATIC ANALYSIS
+        # MOVIE ENRICHMENT
         # -------------------------------------------------
 
-        enriched = (
-            get_enriched_movies(
-                watched,
-                upload_fingerprint,
+        set_analysis_progress(
+            25,
+            "Preparing movie data...",
+        )
+
+        def update_movie_enrichment(
+            movie_progress: float,
+        ):
+            """
+            Movie enrichment represents 25% -> 75%
+            of the complete analysis.
+            """
+
+            overall_percentage = (
+                25
+                + int(movie_progress * 50)
             )
+
+            set_analysis_progress(
+                overall_percentage,
+                "Preparing movie data...",
+            )
+
+        enriched = get_enriched_movies(
+            watched,
+            upload_fingerprint,
+            progress_callback=update_movie_enrichment,
+        )
+
+        # -------------------------------------------------
+        # TASTE + RECOMMENDATIONS
+        # -------------------------------------------------
+
+        set_analysis_progress(
+            80,
+            "Analyzing your movie taste...",
         )
 
         (
@@ -3724,6 +3864,22 @@ else:
             ratings,
             likes,
         )
+
+        # -------------------------------------------------
+        # FINALIZE
+        # -------------------------------------------------
+
+        set_analysis_progress(
+            95,
+            "Building your dashboard...",
+        )
+
+        set_analysis_progress(
+            100,
+            "Your Letterboxd analysis is ready.",
+        )
+
+        analysis_progress.empty()
 
         st.success(
             "Your Letterboxd analysis is ready."
@@ -3739,15 +3895,19 @@ else:
             crowd_tab,
             recommendations_tab,
             history_tab,
-        ) = st.tabs(
-            [
-                "Overview",
-                "Your Taste",
-                "You vs Crowd",
-                "Recommendations",
-                "History",
-            ]
-        )
+            blend_tab,
+            ) = st.tabs(
+                [
+                    "Overview",
+                    "Your Taste",
+                    "You vs Crowd",
+                    "Recommendations",
+                    "History",
+                    "Movie Blend",
+                ],
+                key="main_navigation",
+                on_change="rerun",
+            )
 
         # -------------------------------------------------
         # OVERVIEW
@@ -3811,6 +3971,17 @@ else:
                 likes,
             )
 
+        # -------------------------------------------------
+        # MOVIE BLEND
+        # -------------------------------------------------
+
+        with blend_tab:
+
+            render_create_blend(
+                enriched,
+                ratings,
+                likes,
+            )
 
     except Exception as error:
 
