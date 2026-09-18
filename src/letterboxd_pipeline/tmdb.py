@@ -74,6 +74,7 @@ def empty_movie_metadata() -> dict:
     return {
         "tmdb_id": "",
         "director": "",
+        "cast_top": "",
         "genre_primary": "",
         "genre_secondary": "",
         "genre_tertiary": "",
@@ -119,6 +120,15 @@ def fetch_movie_metadata(
         if person.get("job") == "Director"
     ]
 
+    cast_names = [
+        person.get("name", "")
+        for person in credits.get(
+            "cast",
+            [],
+        )[:5]
+        if person.get("name")
+    ]
+
     genres = [
         genre["name"]
         for genre in details.get(
@@ -138,6 +148,7 @@ def fetch_movie_metadata(
     return {
         "tmdb_id": details.get("id", ""),
         "director": directors[0] if directors else "",
+        "cast_top": " | ".join(cast_names),
         "genre_primary": genres[0] if len(genres) > 0 else "",
         "genre_secondary": genres[1] if len(genres) > 1 else "",
         "genre_tertiary": genres[2] if len(genres) > 2 else "",
@@ -213,7 +224,8 @@ def discover_movies(
     params = {
         "language": "en-US",
         "sort_by": sort_by,
-        "vote_count.gte": 100,
+        "vote_count.gte": 150,
+        "vote_average.gte": 6.2,
         "page": page,
         "include_adult": False,
     }
@@ -319,6 +331,118 @@ def build_candidate_catalog(
     return list(candidates.values())
 
 
+
+def search_director(name: str) -> Optional[dict]:
+    """Resolve a director name to a TMDB person."""
+    if not name:
+        return None
+
+    data = _request(
+        "/search/person",
+        {
+            "query": name,
+            "language": "en-US",
+            "include_adult": False,
+        },
+    )
+
+    results = data.get("results", []) or []
+    if not results:
+        return None
+
+    directing = [
+        person
+        for person in results
+        if person.get("known_for_department") == "Directing"
+    ]
+    return directing[0] if directing else results[0]
+
+
+def discover_movies_by_directors(
+    director_names: list[str],
+    pages_per_director: int = 1,
+) -> list[dict]:
+    """Build a candidate pool specifically from directors the user already loves."""
+    candidates = {}
+
+    for director_name in director_names[:5]:
+        person = search_director(director_name)
+        if not person or not person.get("id"):
+            continue
+
+        for page in range(1, pages_per_director + 1):
+            data = _request(
+                "/discover/movie",
+                {
+                    "language": "en-US",
+                    "sort_by": "vote_count.desc",
+                    "vote_count.gte": 100,
+                    "vote_average.gte": 6.0,
+                    "with_crew": person["id"],
+                    "page": page,
+                    "include_adult": False,
+                },
+            )
+
+            for movie in data.get("results", []) or []:
+                movie_id = movie.get("id")
+                if movie_id:
+                    movie["_director_source"] = director_name
+                    candidates[movie_id] = movie
+
+    return list(candidates.values())
+
+
+def prefilter_candidates(
+    candidates: list[dict],
+    limit: int = 120,
+) -> list[dict]:
+    """
+    Cheap discovery-level filtering before expensive /movie/{id} detail calls.
+
+    This is especially important for Movie Blend: TMDB discovery already gives
+    us rating, vote count, popularity and genre IDs, so there is no reason to
+    enrich hundreds of weak candidates.
+    """
+    if not candidates:
+        return []
+
+    rows = []
+
+    for movie in candidates:
+        try:
+            vote_average = float(movie.get("vote_average") or 0)
+        except (TypeError, ValueError):
+            vote_average = 0.0
+
+        try:
+            vote_count = int(movie.get("vote_count") or 0)
+        except (TypeError, ValueError):
+            vote_count = 0
+
+        try:
+            popularity = float(movie.get("popularity") or 0)
+        except (TypeError, ValueError):
+            popularity = 0.0
+
+        if vote_average < 6.2 or vote_count < 150:
+            continue
+
+        # Discovery quality score: enough to discard weak candidates before
+        # making the much slower detail+credits request.
+        discovery_score = (
+            vote_average * 10.0
+            + min(vote_count / 250.0, 20.0)
+            + min(popularity / 25.0, 8.0)
+        )
+
+        rows.append((discovery_score, movie))
+
+    rows.sort(key=lambda item: item[0], reverse=True)
+
+    return [movie for _, movie in rows[:limit]]
+
+
 def enrich_candidate_catalog(candidates: list[dict], max_workers: int = 8) -> pd.DataFrame:
     """Enrich candidates concurrently and preserve discovery posters as fallback."""
     if not candidates:
@@ -334,6 +458,7 @@ def enrich_candidate_catalog(candidates: list[dict], max_workers: int = 8) -> pd
             return None
         credits = details.get("credits", {}) or {}
         directors = [p.get("name", "") for p in credits.get("crew", []) if p.get("job") == "Director"]
+        cast_names = [p.get("name", "") for p in credits.get("cast", [])[:5] if p.get("name")]
         genres = [g.get("name", "") for g in details.get("genres", []) if g.get("name")]
         countries = [c.get("name", "") for c in details.get("production_countries", []) if c.get("name")]
         release_date = details.get("release_date") or candidate.get("release_date") or ""
@@ -346,6 +471,7 @@ def enrich_candidate_catalog(candidates: list[dict], max_workers: int = 8) -> pd
         return {
             "tmdb_id": movie_id, "title": details.get("title") or candidate.get("title", ""),
             "Year": release_year, "director": directors[0] if directors else "",
+            "cast_top": " | ".join(cast_names),
             "genre_primary": genres[0] if len(genres) > 0 else "",
             "genre_secondary": genres[1] if len(genres) > 1 else "",
             "genre_tertiary": genres[2] if len(genres) > 2 else "",

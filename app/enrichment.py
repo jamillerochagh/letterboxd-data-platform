@@ -5,7 +5,7 @@ from src.letterboxd_pipeline.tmdb import fetch_movie_metadata
 
 
 TMDB_FIELDS = [
-    "tmdb_id", "director", "genre_primary", "genre_secondary",
+    "tmdb_id", "director", "cast_top", "genre_primary", "genre_secondary",
     "genre_tertiary", "country_primary", "original_language",
     "runtime_min", "vote_average", "popularity", "tagline",
     "poster_path", "overview",
@@ -58,6 +58,9 @@ def enrich_movies(watched: pd.DataFrame, progress_callback=None) -> pd.DataFrame
         key = (title.lower(), year)
         cached = cache.get(key)
 
+        # A cached movie is always usable for the normal analysis.
+        # Missing cast must never force a TMDB re-fetch here, because that
+        # makes normal dashboards and Movie Blend unnecessarily slow.
         if cached:
             metadata = {field: cached.get(field) for field in TMDB_FIELDS}
             cache_hits += 1
@@ -73,6 +76,7 @@ def enrich_movies(watched: pd.DataFrame, progress_callback=None) -> pd.DataFrame
                         "title": title,
                         "release_year": year,
                         "director": metadata.get("director"),
+                        "cast_top": metadata.get("cast_top"),
                         "genre_primary": metadata.get("genre_primary"),
                         "genre_secondary": metadata.get("genre_secondary"),
                         "genre_tertiary": metadata.get("genre_tertiary"),

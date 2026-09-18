@@ -35,6 +35,7 @@ from src.letterboxd_pipeline.tmdb import (
     build_candidate_catalog,
     enrich_candidate_catalog,
     get_movie_details,
+    prefilter_candidates,
 )
 
 
@@ -489,12 +490,21 @@ def _build_shared_recommendations(
 
     candidates = build_candidate_catalog(
         preferred_genres,
-        pages_per_genre=3,
+        pages_per_genre=2,
+    )
+
+    # TMDB detail + credits calls are the expensive part of Blend.
+    # Narrow the discovery pool first, then enrich only the strongest
+    # candidates instead of hundreds of movies.
+    candidates = prefilter_candidates(
+        candidates,
+        limit=90,
     )
 
     candidate_df = (
         enrich_candidate_catalog(
-            candidates
+            candidates,
+            max_workers=8,
         )
     )
 
@@ -1627,21 +1637,40 @@ def render_create_blend(
             f"{base_url}/?blend={blend_id}"
         )
 
-        st.success(
-            "Your Movie Blend is ready to share."
-        )
+        if blend_is_ready(blend_id):
+            st.success(
+                "Your Movie Blend is ready."
+            )
+            st.markdown(
+                f"[Open the results]({blend_url})"
+            )
+        else:
+            st.success(
+                "Your profile is ready."
+            )
+            st.subheader(
+                "Waiting for your friend..."
+            )
+            st.caption(
+                "Share this invitation link. Once your friend finishes "
+                "their analysis, opening the link will show your shared results."
+            )
 
-        st.text_input(
-            "Share this link with your friend",
-            value=blend_url,
-            key="blend_share_url",
-        )
+            st.text_input(
+                "Invitation link",
+                value=blend_url,
+                key="blend_share_url",
+            )
 
-        st.caption(
-            "Your friend opens the link and uploads "
-            "their own Letterboxd export. "
-            "The original ZIP files are not stored."
-        )
+            if st.button(
+                "Check if my friend is ready",
+                key=f"blend_check_{blend_id}",
+            ):
+                st.rerun()
+
+            st.caption(
+                "The original Letterboxd ZIP files are not stored."
+            )
 
 
 # =========================================================

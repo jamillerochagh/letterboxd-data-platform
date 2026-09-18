@@ -29,71 +29,150 @@ GENRE_TOTAL_WEIGHT = (
 # USER PREFERENCES
 # =========================================================
 
+def _normalize_uri(series):
+    return (
+        series
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.rstrip("/")
+    )
+
+
+def _movie_key(data):
+    if "Name" in data.columns:
+        names = data["Name"]
+    elif "title" in data.columns:
+        names = data["title"]
+    else:
+        names = pd.Series("", index=data.index)
+
+    if "Year" in data.columns:
+        years = data["Year"]
+    elif "release_year" in data.columns:
+        years = data["release_year"]
+    else:
+        years = pd.Series("", index=data.index)
+
+    names = (
+        names.fillna("")
+        .astype(str)
+        .str.strip()
+        .str.casefold()
+    )
+    years = (
+        pd.to_numeric(years, errors="coerce")
+        .astype("Int64")
+        .astype(str)
+    )
+    return names + "||" + years
+
+
 def attach_user_preferences(
     enriched,
     ratings,
     likes,
 ):
+    """
+    Attach Letterboxd ratings/likes to enriched metadata.
+
+    Matching priority:
+    1. exact normalized Letterboxd URI
+    2. normalized title + release year only for rows still unmatched
+
+    Existing rating/liked columns from earlier merges are discarded first,
+    preventing stale values from being carried into Overview or profiles.
+    """
     result = enriched.copy()
 
-    if not ratings.empty:
-        rating_columns = [
-            column
-            for column in [
-                "Letterboxd URI",
-                "Rating",
-            ]
-            if column in ratings.columns
-        ]
+    result = result.drop(
+        columns=["rating", "liked"],
+        errors="ignore",
+    )
+    result["rating"] = pd.NA
+    result["liked"] = False
 
-        rating_data = ratings[rating_columns].copy()
+    rating_data = ratings.copy() if ratings is not None else pd.DataFrame()
 
-        if "Rating" in rating_data.columns:
-            rating_data["Rating"] = pd.to_numeric(
-                rating_data["Rating"],
-                errors="coerce",
-            )
-            rating_data = rating_data.rename(
-                columns={"Rating": "rating"}
-            )
-
-        if "Letterboxd URI" in rating_data.columns:
-            rating_data = rating_data.drop_duplicates(
-                subset=["Letterboxd URI"],
-                keep="last",
-            )
-
-            result = result.merge(
-                rating_data,
-                on="Letterboxd URI",
-                how="left",
-            )
-
-    if "rating" not in result.columns:
-        result["rating"] = pd.NA
-
-    liked_uris = set()
-
-    if (
-        not likes.empty
-        and "Letterboxd URI" in likes.columns
-    ):
-        liked_uris = set(
-            likes["Letterboxd URI"]
-            .dropna()
-            .astype(str)
+    if not rating_data.empty and "Rating" in rating_data.columns:
+        rating_data["Rating"] = pd.to_numeric(
+            rating_data["Rating"],
+            errors="coerce",
         )
 
-    if "Letterboxd URI" in result.columns:
-        result["liked"] = (
-            result["Letterboxd URI"]
-            .astype(str)
-            .isin(liked_uris)
-        )
-    else:
-        result["liked"] = False
+        # URI-first: Letterboxd's own stable movie identifier.
+        if (
+            "Letterboxd URI" in result.columns
+            and "Letterboxd URI" in rating_data.columns
+        ):
+            result["_lb_uri"] = _normalize_uri(result["Letterboxd URI"])
+            rating_data["_lb_uri"] = _normalize_uri(rating_data["Letterboxd URI"])
 
-    return result
+            uri_ratings = (
+                rating_data[
+                    rating_data["_lb_uri"].ne("")
+                ][["_lb_uri", "Rating"]]
+                .drop_duplicates("_lb_uri", keep="last")
+                .set_index("_lb_uri")["Rating"]
+            )
+
+            result["rating"] = result["_lb_uri"].map(uri_ratings)
+
+        # Fallback only for genuinely unmatched rows.
+        unmatched = result["rating"].isna()
+        if unmatched.any() and {"Name", "Year"}.issubset(rating_data.columns):
+            rating_data["_movie_key"] = _movie_key(rating_data)
+            result["_movie_key"] = _movie_key(result)
+
+            key_ratings = (
+                rating_data[
+                    rating_data["_movie_key"].ne("||<NA>")
+                ][["_movie_key", "Rating"]]
+                .drop_duplicates("_movie_key", keep="last")
+                .set_index("_movie_key")["Rating"]
+            )
+            result.loc[unmatched, "rating"] = (
+                result.loc[unmatched, "_movie_key"].map(key_ratings)
+            )
+
+    if likes is not None and not likes.empty:
+        if (
+            "Letterboxd URI" in result.columns
+            and "Letterboxd URI" in likes.columns
+        ):
+            if "_lb_uri" not in result.columns:
+                result["_lb_uri"] = _normalize_uri(result["Letterboxd URI"])
+
+            liked_uris = set(
+                _normalize_uri(likes["Letterboxd URI"])
+                .loc[lambda values: values.ne("")]
+            )
+            result["liked"] = result["_lb_uri"].isin(liked_uris)
+
+        # Like fallback by title/year only where URI was unavailable.
+        if {"Name", "Year"}.issubset(likes.columns):
+            if "_movie_key" not in result.columns:
+                result["_movie_key"] = _movie_key(result)
+
+            liked_keys = set(_movie_key(likes))
+            no_uri = (
+                result["_lb_uri"].eq("")
+                if "_lb_uri" in result.columns
+                else pd.Series(True, index=result.index)
+            )
+            result.loc[no_uri, "liked"] = (
+                result.loc[no_uri, "_movie_key"].isin(liked_keys)
+            )
+
+    result["rating"] = pd.to_numeric(
+        result["rating"],
+        errors="coerce",
+    )
+
+    return result.drop(
+        columns=["_lb_uri", "_movie_key"],
+        errors="ignore",
+    )
 
 
 # =========================================================
@@ -449,78 +528,146 @@ def score_movie(
 # RANK CANDIDATES
 # =========================================================
 
+def _quality_score(value):
+    """Convert TMDB's 0-10 rating to a conservative 0-100 quality signal."""
+    try:
+        rating = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+    # 5.5 is effectively the floor of our usable catalogue.
+    return max(0.0, min(100.0, ((rating - 5.5) / 3.5) * 100.0))
+
+
+def _diversify_ranked_candidates(
+    ranked,
+    limit,
+    genre_penalty=4.0,
+    director_penalty=6.0,
+):
+    """
+    Greedy diversity-aware re-ranking.
+
+    High-personalization movies remain near the top, while repeated genres
+    and directors receive a small penalty as the recommendation page fills.
+    """
+    if ranked is None or ranked.empty:
+        return pd.DataFrame()
+
+    remaining = ranked.copy()
+    selected_rows = []
+    genre_counts = {}
+    director_counts = {}
+
+    while not remaining.empty and len(selected_rows) < limit:
+        best_index = None
+        best_adjusted = None
+
+        for index, row in remaining.iterrows():
+            adjusted = float(row.get("recommendation_score", 0.0))
+
+            genre = str(row.get("genre_primary", "") or "").strip()
+            director = str(row.get("director", "") or "").strip()
+
+            if genre:
+                adjusted -= genre_penalty * genre_counts.get(genre, 0)
+
+            if director:
+                adjusted -= director_penalty * director_counts.get(director, 0)
+
+            if best_adjusted is None or adjusted > best_adjusted:
+                best_adjusted = adjusted
+                best_index = index
+
+        if best_index is None:
+            break
+
+        chosen = remaining.loc[best_index].copy()
+        chosen["diversified_score"] = round(float(best_adjusted), 2)
+        selected_rows.append(chosen)
+
+        genre = str(chosen.get("genre_primary", "") or "").strip()
+        director = str(chosen.get("director", "") or "").strip()
+
+        if genre:
+            genre_counts[genre] = genre_counts.get(genre, 0) + 1
+        if director:
+            director_counts[director] = director_counts.get(director, 0) + 1
+
+        remaining = remaining.drop(index=best_index)
+
+    if not selected_rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(selected_rows).reset_index(drop=True)
+
+
 def rank_candidates(
     candidates,
     profile,
     watched_tmdb_ids,
     limit=50,
 ):
+    """
+    Multi-stage personalized ranking.
+
+    1. Remove watched movies.
+    2. Calculate the user's content/taste match.
+    3. Apply a modest TMDB quality signal.
+    4. Re-rank for genre/director diversity.
+
+    Taste remains the dominant signal; public quality prevents mediocre,
+    universally-popular candidates from floating to the top for everyone.
+    """
     if candidates is None or candidates.empty:
         return pd.DataFrame()
 
     result = add_decade(candidates)
 
     if "tmdb_id" in result.columns:
-        ids = pd.to_numeric(
-            result["tmdb_id"],
-            errors="coerce",
-        )
-
-        result = result[
-            ~ids.isin(watched_tmdb_ids)
-        ].copy()
+        ids = pd.to_numeric(result["tmdb_id"], errors="coerce")
+        result = result[~ids.isin(watched_tmdb_ids)].copy()
 
     result["taste_match_score"] = result.apply(
-        lambda row: score_movie(
-            row,
-            profile,
-        ),
+        lambda row: score_movie(row, profile),
         axis=1,
     )
 
-    result = result[
-        result["taste_match_score"] > 0
-    ].copy()
-
-    # Quality is deliberately NOT part of the taste score.
-    # It is only a late tie-breaker, so individual taste
-    # remains the dominant ranking signal.
-    result["_quality_tiebreak"] = pd.to_numeric(
-        result.get(
-            "vote_average",
-            pd.Series(
-                0,
-                index=result.index,
-            ),
-        ),
+    result["vote_average"] = pd.to_numeric(
+        result.get("vote_average", pd.Series(0, index=result.index)),
         errors="coerce",
     ).fillna(0)
 
+    result = result[
+        (result["taste_match_score"] > 0)
+        & (result["vote_average"] >= 6.2)
+    ].copy()
+
+    if result.empty:
+        return result
+
+    result["quality_score"] = result["vote_average"].apply(_quality_score)
+
+    # Personal taste dominates. Quality is intentionally secondary.
+    result["recommendation_score"] = (
+        result["taste_match_score"] * 0.88
+        + result["quality_score"] * 0.12
+    ).round(2)
+
     result = result.sort_values(
-        [
-            "taste_match_score",
-            "_quality_tiebreak",
-        ],
-        ascending=[
-            False,
-            False,
-        ],
+        ["recommendation_score", "taste_match_score", "vote_average"],
+        ascending=[False, False, False],
     )
 
     if "tmdb_id" in result.columns:
-        result = result.drop_duplicates(
-            subset=["tmdb_id"]
-        )
+        result = result.drop_duplicates(subset=["tmdb_id"])
 
-    result = result.drop(
-        columns=["_quality_tiebreak"],
-        errors="ignore",
-    )
+    # Keep a broader pre-ranked pool, then diversify it.
+    result = result.head(max(limit * 4, 100)).reset_index(drop=True)
 
-    return (
-        result
-        .head(limit)
-        .reset_index(drop=True)
+    return _diversify_ranked_candidates(
+        result,
+        limit=limit,
     )
 
 

@@ -784,6 +784,15 @@ def rank_blend_candidates(
         )
     ].copy()
 
+    if "vote_average" in result.columns:
+        blend_quality = pd.to_numeric(
+            result["vote_average"],
+            errors="coerce",
+        )
+        result = result[
+            blend_quality.ge(6.2)
+        ].copy()
+
     sort_columns = [
         "blend_score"
     ]

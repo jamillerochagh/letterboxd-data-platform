@@ -1,9 +1,11 @@
 import hashlib
+import html
 import sys
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 
@@ -35,6 +37,9 @@ from src.letterboxd_pipeline.recommendations import (
 from src.letterboxd_pipeline.tmdb import (
     build_candidate_catalog,
     enrich_candidate_catalog,
+    fetch_movie_metadata,
+    prefilter_candidates,
+    discover_movies_by_directors,
 )
 
 from blend_ui import (
@@ -175,6 +180,196 @@ st.markdown(
         color:var(--lb-text)!important;
     }
     hr { border-color:var(--lb-border)!important; }
+
+
+    /* GLOBAL PERIOD FILTER */
+
+    .period-heading {
+        margin-top:18px;
+        margin-bottom:6px;
+        color:var(--lb-text);
+        font-size:15px;
+        font-weight:800;
+        letter-spacing:.01em;
+    }
+
+    .period-copy {
+        color:var(--lb-muted);
+        font-size:12px;
+        margin-bottom:8px;
+    }
+
+    div[data-testid="stSelectbox"]:has(
+        select[aria-label="Viewing period"]
+    ) {
+        background:linear-gradient(
+            135deg,
+            rgba(0,224,84,.10),
+            rgba(64,188,244,.05)
+        );
+        border:1px solid rgba(0,224,84,.42);
+        border-radius:12px;
+        padding:12px 14px 14px 14px;
+        margin-bottom:18px;
+    }
+
+    div[data-testid="stSelectbox"] label {
+        color:var(--lb-text)!important;
+        font-weight:750!important;
+    }
+
+    /* FOCUS / ACTIVE STATES */
+
+    div[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within,
+    div[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus {
+        border-color:var(--lb-green)!important;
+        box-shadow:0 0 0 1px var(--lb-green)!important;
+        outline:none!important;
+    }
+
+    [data-baseweb="tab"]:focus,
+    [data-baseweb="tab"]:focus-visible,
+    button:focus,
+    button:focus-visible {
+        outline:none!important;
+        box-shadow:0 0 0 1px rgba(0,224,84,.55)!important;
+        border-color:var(--lb-green)!important;
+    }
+
+
+
+    /* STREAMLIT / BASEWEB FOCUS OVERRIDES */
+
+    :root {
+        --primary-color:#00E054!important;
+    }
+
+    .stTabs [data-baseweb="tab"]:focus,
+    .stTabs [data-baseweb="tab"]:focus-visible,
+    .stTabs [data-baseweb="tab"][aria-selected="true"]:focus,
+    .stTabs [data-baseweb="tab"][aria-selected="true"]:focus-visible {
+        outline:none!important;
+        box-shadow:inset 0 -3px 0 #00E054!important;
+        border-color:transparent!important;
+        border-bottom-color:#00E054!important;
+    }
+
+    div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+    div[data-testid="stSelectbox"] [data-baseweb="select"] > div:hover,
+    div[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus,
+    div[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within {
+        outline:none!important;
+        border-color:#00E054!important;
+        box-shadow:0 0 0 1px rgba(0,224,84,.70)!important;
+    }
+
+    [data-baseweb="tab"] *,
+    [data-baseweb="select"] * {
+        outline-color:#00E054!important;
+    }
+
+    /* COMPACT TABLES */
+
+    .lb-compact-table-wrap {
+        width:100%;
+        overflow-x:auto;
+        border:1px solid var(--lb-border);
+        border-radius:10px;
+        background:var(--lb-surface);
+    }
+
+    .lb-compact-table {
+        width:100%;
+        border-collapse:collapse;
+        min-width:460px;
+    }
+
+    .lb-compact-table th {
+        background:var(--lb-surface-2);
+        color:var(--lb-muted);
+        font-size:11px;
+        text-transform:uppercase;
+        letter-spacing:.06em;
+        text-align:left;
+        padding:11px 13px;
+        border-bottom:1px solid var(--lb-border);
+    }
+
+    .lb-compact-table td {
+        color:var(--lb-text);
+        font-size:13px;
+        padding:11px 13px;
+        border-bottom:1px solid rgba(48,58,67,.70);
+    }
+
+    .lb-compact-table tr:last-child td {
+        border-bottom:0;
+    }
+
+
+    .country-ranking-scroll {
+        max-height:270px;
+        overflow-y:auto;
+        border:1px solid var(--lb-border);
+        border-radius:10px;
+        background:var(--lb-surface);
+        scrollbar-width:thin;
+        scrollbar-color:#56636F transparent;
+    }
+
+    .country-ranking-scroll .lb-compact-table-wrap {
+        border:0;
+        border-radius:0;
+        overflow:visible;
+    }
+
+    .country-ranking-scroll .lb-compact-table th {
+        position:sticky;
+        top:0;
+        z-index:2;
+    }
+
+    /* RECOMMENDATION CAROUSEL */
+
+    .lb-rec-carousel {
+        display:flex;
+        gap:16px;
+        overflow-x:auto;
+        padding:4px 2px 16px 2px;
+        scroll-snap-type:x proximity;
+        scrollbar-width:thin;
+        scrollbar-color:#56636F transparent;
+    }
+
+    .lb-rec-card {
+        flex:0 0 180px;
+        scroll-snap-align:start;
+    }
+
+    .lb-rec-poster {
+        width:180px;
+        aspect-ratio:2/3;
+        object-fit:cover;
+        border-radius:9px;
+        border:1px solid var(--lb-border);
+        background:var(--lb-surface-2);
+        display:block;
+    }
+
+    .lb-rec-poster-missing {
+        width:180px;
+        aspect-ratio:2/3;
+        border-radius:9px;
+        border:1px solid var(--lb-border);
+        background:var(--lb-surface-2);
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        color:var(--lb-muted);
+        font-size:12px;
+        text-align:center;
+    }
+
 
     .taste-card,.crowd-card {
         background:var(--lb-surface)!important; border-color:var(--lb-border)!important;
@@ -477,91 +672,816 @@ def get_enriched_movies(
 # AUTOMATIC RECOMMENDATIONS
 # =========================================================
 
+RECOMMENDER_VERSION = "v9_multistage"
+
+RECOMMENDER_VERSION = "v17_rating_integrity"
+
+def get_favorite_directors(
+    preference_data: pd.DataFrame,
+    limit: int = 5,
+) -> list[str]:
+    if (
+        preference_data is None
+        or preference_data.empty
+        or "director" not in preference_data.columns
+    ):
+        return []
+
+    data = preference_data.copy()
+    data["director"] = data["director"].replace("", pd.NA)
+    data["rating_numeric"] = pd.to_numeric(
+        data.get(
+            "rating",
+            pd.Series(index=data.index, dtype=float),
+        ),
+        errors="coerce",
+    )
+
+    data = data.dropna(subset=["director"])
+    if data.empty:
+        return []
+
+    summary = (
+        data.groupby("director")
+        .agg(
+            watched=("director", "size"),
+            avg_rating=("rating_numeric", "mean"),
+        )
+        .reset_index()
+    )
+    summary["avg_rating"] = summary["avg_rating"].fillna(0)
+    summary["strength"] = (
+        summary["watched"].clip(upper=8) * 0.55
+        + summary["avg_rating"] * 0.45
+    )
+
+    return (
+        summary.sort_values(
+            ["strength", "watched", "avg_rating"],
+            ascending=False,
+        )
+        .head(limit)["director"]
+        .tolist()
+    )
+
+
 def get_recommendations(
     enriched: pd.DataFrame,
     ratings: pd.DataFrame,
     likes: pd.DataFrame,
 ):
+    preference_data = attach_user_preferences(
+        enriched,
+        ratings,
+        likes,
+    )
+    profile = build_taste_profile(preference_data)
 
-    preference_data = (
-        attach_user_preferences(
-            enriched,
-            ratings,
-            likes,
-        )
+    cache_key = (
+        st.session_state.get("upload_fingerprint"),
+        RECOMMENDER_VERSION,
     )
 
-    profile = build_taste_profile(
-        preference_data
-    )
-
-    if (
-        "recommendations"
-        not in st.session_state
-    ):
-
-        with st.spinner(
-            "Building personalized recommendations..."
-        ):
-
+    if st.session_state.get("recommendations_cache_key") != cache_key:
+        with st.spinner("Building personalized recommendations..."):
             preferred_genres = list(
                 profile.get(
                     "genre_combined",
                     profile.get("genre_primary", {}),
                 ).keys()
+            )[:6]
+
+            genre_candidates = build_candidate_catalog(
+                preferred_genres,
+                pages_per_genre=2,
+            )
+            genre_candidates = prefilter_candidates(
+                genre_candidates,
+                limit=100,
             )
 
-            candidates = (
-                build_candidate_catalog(
-                    preferred_genres,
-                    pages_per_genre=4,
-                )
+            favorite_directors = get_favorite_directors(
+                preference_data,
+                limit=5,
+            )
+            director_candidates = discover_movies_by_directors(
+                favorite_directors,
+                pages_per_director=1,
+            )
+            director_candidates = prefilter_candidates(
+                director_candidates,
+                limit=60,
             )
 
-            candidate_df = (
-                enrich_candidate_catalog(
-                    candidates
-                )
+            candidate_map = {}
+            for candidate in genre_candidates + director_candidates:
+                movie_id = candidate.get("id")
+                if movie_id:
+                    candidate_map[movie_id] = candidate
+
+            candidate_df = enrich_candidate_catalog(
+                list(candidate_map.values()),
+                max_workers=8,
             )
 
             watched_ids = set(
                 pd.to_numeric(
-                    enriched.get(
-                        "tmdb_id",
-                        pd.Series(
-                            dtype=float
-                        ),
-                    ),
+                    enriched.get("tmdb_id", pd.Series(dtype=float)),
                     errors="coerce",
-                )
-                .dropna()
-                .astype(int)
+                ).dropna().astype(int)
             )
 
-            recommendations = (
-                rank_candidates(
-                    candidate_df,
-                    profile,
-                    watched_ids,
-                    limit=50,
-                )
+            recommendations = rank_candidates(
+                candidate_df,
+                profile,
+                watched_ids,
+                limit=60,
             )
 
-            st.session_state[
-                "recommendations"
-            ] = recommendations
+            st.session_state["recommendations"] = recommendations
+            st.session_state["recommendations_cache_key"] = cache_key
 
-    return (
-        profile,
-        st.session_state[
-            "recommendations"
-        ],
+    return profile, st.session_state.get(
+        "recommendations",
+        pd.DataFrame(),
     )
 
 
 # =========================================================
 # OVERVIEW
 # =========================================================
+
+
+def _movie_key_frame(data: pd.DataFrame) -> pd.Series:
+    if data is None or data.empty:
+        return pd.Series(dtype="string")
+
+    if "Name" in data.columns:
+        title_source = data["Name"]
+    elif "title" in data.columns:
+        title_source = data["title"]
+    else:
+        title_source = pd.Series(
+            "",
+            index=data.index,
+            dtype="string",
+        )
+
+    if "Year" in data.columns:
+        year_source = data["Year"]
+    elif "release_year" in data.columns:
+        year_source = data["release_year"]
+    else:
+        year_source = pd.Series(
+            "",
+            index=data.index,
+            dtype="string",
+        )
+
+    names = (
+        title_source
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    years = (
+        year_source
+        .fillna("")
+        .astype(str)
+        .str.replace(
+            r"\.0$",
+            "",
+            regex=True,
+        )
+        .str.strip()
+    )
+
+    return names + "||" + years
+
+
+def filter_letterboxd_period(
+    selected_year,
+    watched,
+    ratings,
+    diary,
+    reviews,
+    likes,
+    enriched,
+):
+    """
+    Filter retrospective analytics to a diary year.
+    Recommendations and Movie Blend intentionally remain full-history.
+    """
+    if selected_year == "All Time":
+        return watched, ratings, diary, reviews, likes, enriched
+
+    year = int(selected_year)
+
+    if (
+        diary.empty
+        or "Watched Date" not in diary.columns
+    ):
+        return (
+            watched.iloc[0:0].copy(),
+            ratings.iloc[0:0].copy(),
+            diary.iloc[0:0].copy(),
+            reviews.iloc[0:0].copy(),
+            likes.iloc[0:0].copy(),
+            enriched.iloc[0:0].copy(),
+        )
+
+    period_diary = diary[
+        diary["Watched Date"].dt.year.eq(year)
+    ].copy()
+
+    period_keys = set(
+        _movie_key_frame(period_diary).tolist()
+    )
+
+    def filter_frame(frame):
+        if frame is None or frame.empty:
+            return frame.copy()
+
+        return frame[
+            _movie_key_frame(frame).isin(period_keys)
+        ].copy()
+
+    return (
+        filter_frame(watched),
+        filter_frame(ratings),
+        period_diary,
+        filter_frame(reviews),
+        filter_frame(likes),
+        filter_frame(enriched),
+    )
+
+
+
+def _rating_stars(rating) -> str:
+    value = pd.to_numeric(
+        pd.Series([rating]),
+        errors="coerce",
+    ).iloc[0]
+
+    if pd.isna(value):
+        return ""
+
+    value = max(
+        0.0,
+        min(float(value), 5.0),
+    )
+
+    full = int(value)
+    half = (
+        value - full
+    ) >= 0.5
+
+    return (
+        "★" * full
+        + ("½" if half else "")
+    )
+
+
+def render_compact_table(
+    data: pd.DataFrame,
+):
+    if data is None or data.empty:
+        return
+
+    headers = "".join(
+        f"<th>{html.escape(str(column))}</th>"
+        for column in data.columns
+    )
+
+    rows = []
+
+    for _, row in data.iterrows():
+        cells = []
+
+        for value in row.tolist():
+            if pd.isna(value):
+                display_value = ""
+            else:
+                display_value = str(value)
+
+            cells.append(
+                "<td>"
+                + html.escape(display_value)
+                + "</td>"
+            )
+
+        rows.append(
+            "<tr>"
+            + "".join(cells)
+            + "</tr>"
+        )
+
+    st.markdown(
+        """
+        <div class="lb-compact-table-wrap">
+            <table class="lb-compact-table">
+                <thead><tr>
+        """
+        + headers
+        + """
+                </tr></thead>
+                <tbody>
+        """
+        + "".join(rows)
+        + """
+                </tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
+
+@st.cache_data(
+    show_spinner=False,
+    ttl=60 * 60 * 24 * 30,
+)
+def get_timeline_movie_metadata(
+    title: str,
+    year: str = "",
+):
+    try:
+        return fetch_movie_metadata(
+            title,
+            year,
+        )
+    except Exception:
+        return {}
+
+
+
+def attach_cached_posters(
+    movies: pd.DataFrame,
+    enriched: pd.DataFrame,
+) -> pd.DataFrame:
+    """Attach already-cached posters without making network requests."""
+    if movies is None or movies.empty or enriched is None or enriched.empty:
+        return movies
+
+    result = movies.copy()
+    source = enriched.copy()
+
+    if "poster_path" not in result.columns:
+        result["poster_path"] = pd.NA
+    if "poster_path" not in source.columns:
+        return result
+
+    valid_source = source[
+        source["poster_path"].notna()
+        & source["poster_path"].astype(str).str.strip().ne("")
+    ].copy()
+
+    if valid_source.empty:
+        return result
+
+    missing = (
+        result["poster_path"].isna()
+        | result["poster_path"].astype(str).str.strip().eq("")
+    )
+
+    # 1. TMDB ID is the strongest join key.
+    if "tmdb_id" in result.columns and "tmdb_id" in valid_source.columns:
+        source_ids = pd.to_numeric(valid_source["tmdb_id"], errors="coerce")
+        result_ids = pd.to_numeric(result["tmdb_id"], errors="coerce")
+        id_map = (
+            valid_source.assign(_id=source_ids)
+            .dropna(subset=["_id"])
+            .drop_duplicates("_id")
+            .set_index("_id")["poster_path"]
+            .to_dict()
+        )
+        result.loc[missing, "poster_path"] = result_ids[missing].map(id_map)
+        missing = (
+            result["poster_path"].isna()
+            | result["poster_path"].astype(str).str.strip().eq("")
+        )
+
+    # 2. Letterboxd URI is stable across export files when present.
+    uri_candidates = ["Letterboxd URI", "letterboxd_uri", "URI"]
+    result_uri = next((c for c in uri_candidates if c in result.columns), None)
+    source_uri = next((c for c in uri_candidates if c in valid_source.columns), None)
+
+    if result_uri and source_uri and missing.any():
+        uri_map = (
+            valid_source.dropna(subset=[source_uri])
+            .drop_duplicates(source_uri)
+            .set_index(source_uri)["poster_path"]
+            .to_dict()
+        )
+        result.loc[missing, "poster_path"] = result.loc[missing, result_uri].map(uri_map)
+        missing = (
+            result["poster_path"].isna()
+            | result["poster_path"].astype(str).str.strip().eq("")
+        )
+
+    # 3. Final fallback: normalized title + release year.
+    def make_keys(frame):
+        title_col = "Name" if "Name" in frame.columns else "title"
+        year_col = "Year" if "Year" in frame.columns else "release_year"
+
+        titles = (
+            frame.get(title_col, pd.Series("", index=frame.index))
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.casefold()
+        )
+        years = pd.to_numeric(
+            frame.get(year_col, pd.Series(pd.NA, index=frame.index)),
+            errors="coerce",
+        ).astype("Int64").astype(str)
+
+        return titles + "||" + years
+
+    if missing.any():
+        valid_source["_poster_key"] = make_keys(valid_source)
+        result["_poster_key"] = make_keys(result)
+
+        key_map = (
+            valid_source.drop_duplicates("_poster_key")
+            .set_index("_poster_key")["poster_path"]
+            .to_dict()
+        )
+        result.loc[missing, "poster_path"] = (
+            result.loc[missing, "_poster_key"].map(key_map)
+        )
+        result = result.drop(columns=["_poster_key"], errors="ignore")
+
+    return result
+
+
+def render_movie_poster_carousel(
+    movies: pd.DataFrame,
+    empty_message: str,
+):
+    if movies is None or movies.empty:
+        st.caption(empty_message)
+        return
+
+    cards = []
+
+    for _, movie in movies.iterrows():
+        title = movie.get(
+            "Name",
+            movie.get(
+                "title",
+                "Unknown Movie",
+            ),
+        )
+
+        title = (
+            str(title)
+            if pd.notna(title)
+            else "Unknown Movie"
+        )
+
+        poster_path = movie.get(
+            "poster_path"
+        )
+
+
+        if (
+            poster_path is not None
+            and pd.notna(poster_path)
+            and str(poster_path).strip()
+        ):
+            poster_html = (
+                '<img class="lb-rec-poster" src="'
+                'https://image.tmdb.org/t/p/w500'
+                + html.escape(str(poster_path))
+                + '" alt="'
+                + html.escape(title)
+                + '">'
+            )
+        else:
+            poster_html = (
+                '<div class="lb-rec-poster-missing">'
+                'Poster unavailable'
+                '</div>'
+            )
+
+        rating = movie.get(
+            "rating_numeric",
+            movie.get("Rating"),
+        )
+
+        stars = _rating_stars(
+            rating
+        )
+
+        rating_html = (
+            '<div class="recommendation-match">'
+            + html.escape(stars)
+            + '</div>'
+            if stars
+            else ""
+        )
+
+        cards.append(
+            '<div class="lb-rec-card">'
+            + poster_html
+            + '<div class="recommendation-title">'
+            + html.escape(title)
+            + '</div>'
+            + rating_html
+            + '</div>'
+        )
+
+    st.markdown(
+        '<div class="lb-rec-carousel">'
+        + "".join(cards)
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+
+def render_country_ranking(
+    countries: pd.DataFrame,
+):
+    if countries is None or countries.empty:
+        return
+
+    rows = []
+
+    for index, row in countries.iterrows():
+        rows.append(
+            "<tr>"
+            f"<td>{int(index) + 1}</td>"
+            f"<td>{html.escape(str(row['Country']))}</td>"
+            f"<td>{int(row['Movies'])}</td>"
+            "</tr>"
+        )
+
+    st.markdown(
+        """
+        <div class="country-ranking-scroll">
+            <div class="lb-compact-table-wrap">
+                <table class="lb-compact-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Country</th>
+                            <th>Movies</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        """
+        + "".join(rows)
+        + """
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_first_last_watch(
+    diary,
+    enriched,
+    selected_year,
+):
+    if (
+        diary.empty
+        or "Watched Date" not in diary.columns
+    ):
+        return
+
+    dated = (
+        diary
+        .dropna(subset=["Watched Date"])
+        .sort_values("Watched Date")
+        .copy()
+    )
+
+    if dated.empty:
+        return
+
+    metadata = enriched.copy()
+
+    if not metadata.empty:
+        metadata["_movie_key"] = _movie_key_frame(
+            metadata
+        )
+        metadata = (
+            metadata
+            .drop_duplicates("_movie_key")
+            .set_index("_movie_key")
+        )
+
+    if selected_year == "All Time":
+        section_title = "Your Film Timeline"
+        first_label = "First watch on your account"
+        last_label = "Most recent watch"
+    else:
+        section_title = f"{selected_year} — First & Last Watch"
+        first_label = "First watch"
+        last_label = "Last watch"
+
+    st.subheader(section_title)
+
+    def render_card(column, label, row):
+        with column:
+            key = _movie_key_frame(
+                pd.DataFrame([row])
+            ).iloc[0]
+
+            poster_path = None
+
+            if (
+                not metadata.empty
+                and key in metadata.index
+            ):
+                movie_metadata = metadata.loc[key]
+                poster_path = movie_metadata.get(
+                    "poster_path"
+                )
+
+                if isinstance(
+                    poster_path,
+                    pd.Series,
+                ):
+                    poster_path = poster_path.iloc[0]
+
+            if (
+                (
+                    poster_path is None
+                    or pd.isna(poster_path)
+                    or not str(poster_path).strip()
+                )
+                and not enriched.empty
+            ):
+                row_title = str(
+                    row.get("Name", "")
+                ).strip().lower()
+
+                if "Name" in enriched.columns:
+                    title_series = (
+                        enriched["Name"]
+                        .fillna("")
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                    )
+                elif "title" in enriched.columns:
+                    title_series = (
+                        enriched["title"]
+                        .fillna("")
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                    )
+                else:
+                    title_series = pd.Series(
+                        "",
+                        index=enriched.index,
+                    )
+
+                title_matches = enriched[
+                    title_series.eq(row_title)
+                ]
+
+                if (
+                    not title_matches.empty
+                    and "poster_path"
+                    in title_matches.columns
+                ):
+                    candidate_poster = (
+                        title_matches["poster_path"]
+                        .dropna()
+                    )
+
+                    if not candidate_poster.empty:
+                        poster_path = (
+                            candidate_poster.iloc[0]
+                        )
+
+            # Final fallback: fetch only these two timeline movies
+            # directly from TMDB when the enriched frame has no poster.
+            if (
+                poster_path is None
+                or pd.isna(poster_path)
+                or not str(poster_path).strip()
+            ):
+                try:
+                    movie_year = row.get("Year", "")
+                    metadata_fallback = get_timeline_movie_metadata(
+                        str(row.get("Name", "")),
+                        (
+                            str(int(float(movie_year)))
+                            if pd.notna(movie_year)
+                            else ""
+                        ),
+                    )
+                    poster_path = metadata_fallback.get(
+                        "poster_path"
+                    )
+                except Exception:
+                    poster_path = None
+
+            inner_left, inner_right = st.columns(
+                [1, 1.65],
+                gap="medium",
+            )
+
+            with inner_left:
+                if (
+                    poster_path is not None
+                    and pd.notna(poster_path)
+                    and str(poster_path).strip()
+                ):
+                    st.image(
+                        "https://image.tmdb.org/t/p/w500"
+                        f"{poster_path}",
+                        width="stretch",
+                    )
+
+            with inner_right:
+                st.caption(label)
+
+                title = str(
+                    row.get(
+                        "Name",
+                        "Unknown movie",
+                    )
+                )
+
+                movie_year = row.get("Year")
+                year_label = ""
+
+                if pd.notna(movie_year):
+                    try:
+                        year_label = (
+                            f" ({int(float(movie_year))})"
+                        )
+                    except (TypeError, ValueError):
+                        year_label = (
+                            f" ({movie_year})"
+                        )
+
+                st.markdown(
+                    f"**{title}{year_label}**"
+                )
+
+                watched_date = row.get(
+                    "Watched Date"
+                )
+
+                if pd.notna(watched_date):
+                    st.caption(
+                        pd.Timestamp(
+                            watched_date
+                        ).strftime(
+                            "%B %d, %Y"
+                        )
+                    )
+
+                stars = _rating_stars(
+                    row.get("Rating")
+                )
+
+                if stars:
+                    st.markdown(
+                        f"""
+                        <div style="
+                            color:#00E054;
+                            font-size:20px;
+                            letter-spacing:1px;
+                            margin-top:5px;
+                        ">
+                            {stars}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+    first_col, last_col = st.columns(2)
+
+    render_card(
+        first_col,
+        first_label,
+        dated.iloc[0],
+    )
+
+    render_card(
+        last_col,
+        last_label,
+        dated.iloc[-1],
+    )
+
+    st.divider()
+
 
 def render_overview(
     watched,
@@ -570,10 +1490,23 @@ def render_overview(
     reviews,
     likes,
     enriched,
+    profile,
+    selected_year="All Time",
 ):
 
     st.header(
         "Overview"
+    )
+
+    if selected_year != "All Time":
+        st.caption(
+            f"Your {selected_year} in film"
+        )
+
+    render_first_last_watch(
+        diary,
+        enriched,
+        selected_year,
     )
 
     # -----------------------------------------------------
@@ -641,305 +1574,119 @@ def render_overview(
 
     st.divider()
 
-    # -----------------------------------------------------
-    # VIEWING ACTIVITY
-    # -----------------------------------------------------
 
     st.subheader(
-        "Viewing Activity"
+        "Your Taste"
     )
 
-    if (
-        diary.empty
-        or "Watched Date"
-        not in diary.columns
-    ):
-
-        st.info(
-            "No viewing activity available."
-        )
-
-        return
-
-    valid_diary = (
-        diary
-        .dropna(
-            subset=[
-                "Watched Date"
-            ]
-        )
-        .copy()
+    render_your_taste(
+        enriched,
+        ratings,
+        likes,
+        profile,
+        embedded=True,
     )
-
-    if valid_diary.empty:
-
-        st.info(
-            "No dated diary entries available."
-        )
-
-        return
-
-    monthly = (
-        valid_diary
-        .set_index(
-            "Watched Date"
-        )
-        .resample("MS")
-        .size()
-        .reset_index(
-            name="Movies"
-        )
-    )
-
-    activity_chart = px.line(
-        monthly,
-        x="Watched Date",
-        y="Movies",
-        markers=True,
-        color_discrete_sequence=[
-            BLUE
-        ],
-    )
-
-    label_interval = max(
-        1,
-        len(monthly) // 18,
-    )
-
-    labels = [
-        str(value)
-        if index % label_interval == 0
-        else ""
-        for index, value in enumerate(
-            monthly["Movies"]
-        )
-    ]
-
-    activity_chart.update_traces(
-        text=labels,
-        mode="lines+markers+text",
-        textposition="top center",
-        line={
-            "width": 3,
-        },
-        marker={
-            "size": 7,
-        },
-        textfont={
-            "color": TEXT,
-        },
-    )
-
-    activity_chart.update_layout(
-        xaxis_title=None,
-        yaxis_title="Movies",
-    )
-
-    activity_chart = style_chart(
-        activity_chart
-    )
-
-    st.plotly_chart(
-        activity_chart,
-        width="stretch",
-    )
-
-    # -----------------------------------------------------
-    # YEAR + MONTH
-    # -----------------------------------------------------
-
-    left, right = st.columns(2)
-
-    # -----------------------------------------------------
-    # MOVIES BY YEAR
-    # -----------------------------------------------------
-
-    with left:
-
-        st.subheader(
-            "Movies by Year"
-        )
-
-        yearly = (
-            valid_diary[
-                "Watched Date"
-            ]
-            .dt.year
-            .value_counts()
-            .sort_index()
-            .rename_axis(
-                "Year"
-            )
-            .reset_index(
-                name="Movies"
-            )
-        )
-
-        year_chart = px.bar(
-            yearly,
-            x="Year",
-            y="Movies",
-            text="Movies",
-            color_discrete_sequence=[
-                GREEN
-            ],
-        )
-
-        year_chart.update_traces(
-            textposition="outside",
-            cliponaxis=False,
-        )
-
-        year_chart.update_layout(
-            xaxis_title=None,
-            yaxis_title="Movies",
-        )
-
-        year_chart = style_chart(
-            year_chart
-        )
-
-        st.plotly_chart(
-            year_chart,
-            width="stretch",
-        )
-
-    # -----------------------------------------------------
-    # MOVIES BY MONTH
-    # -----------------------------------------------------
-
-    with right:
-
-        st.subheader(
-            "Movies by Month"
-        )
-
-        month_names = {
-            1: "Jan",
-            2: "Feb",
-            3: "Mar",
-            4: "Apr",
-            5: "May",
-            6: "Jun",
-            7: "Jul",
-            8: "Aug",
-            9: "Sep",
-            10: "Oct",
-            11: "Nov",
-            12: "Dec",
-        }
-
-        monthly_totals = (
-            valid_diary[
-                "Watched Date"
-            ]
-            .dt.month
-            .value_counts()
-            .reindex(
-                range(1, 13),
-                fill_value=0,
-            )
-            .rename_axis(
-                "Month number"
-            )
-            .reset_index(
-                name="Movies"
-            )
-        )
-
-        monthly_totals[
-            "Month"
-        ] = (
-            monthly_totals[
-                "Month number"
-            ]
-            .map(
-                month_names
-            )
-        )
-
-        month_chart = px.bar(
-            monthly_totals,
-            x="Month",
-            y="Movies",
-            text="Movies",
-            color_discrete_sequence=[
-                ORANGE
-            ],
-        )
-
-        month_chart.update_traces(
-            textposition="outside",
-            cliponaxis=False,
-        )
-
-        month_chart.update_layout(
-            xaxis_title=None,
-            yaxis_title="Movies",
-        )
-
-        month_chart = style_chart(
-            month_chart
-        )
-
-        st.plotly_chart(
-            month_chart,
-            width="stretch",
-        )
-
-    # -----------------------------------------------------
-    # RECENT ACTIVITY
-    # -----------------------------------------------------
-
-    st.subheader(
-        "Recent Activity"
-    )
-
-    recent = (
-        valid_diary
-        .sort_values(
-            "Watched Date",
-            ascending=False,
-        )
-        .head(10)
-        .copy()
-    )
-
-    recent_columns = [
-        column
-        for column in [
-            "Watched Date",
-            "Name",
-            "Year",
-            "Rating",
-            "Rewatch",
-        ]
-        if column in recent.columns
-    ]
-
-    if recent_columns:
-
-        st.dataframe(
-            recent[
-                recent_columns
-            ],
-            width="stretch",
-            hide_index=True,
-        )
 
 
 # =========================================================
 # YOUR TASTE
 # =========================================================
 
+
+def build_actor_counts(
+    enriched: pd.DataFrame,
+) -> pd.DataFrame:
+    if (
+        enriched is None
+        or enriched.empty
+        or "cast_top" not in enriched.columns
+    ):
+        return pd.DataFrame(
+            columns=["Actor", "Movies"]
+        )
+
+    actor_counts = (
+        enriched["cast_top"]
+        .replace("", pd.NA)
+        .dropna()
+        .astype(str)
+        .str.split("|")
+        .explode()
+        .str.strip()
+    )
+
+    actor_counts = actor_counts[
+        actor_counts.ne("")
+    ]
+
+    if actor_counts.empty:
+        return pd.DataFrame(
+            columns=["Actor", "Movies"]
+        )
+
+    return (
+        actor_counts
+        .value_counts()
+        .head(20)
+        .rename_axis("Actor")
+        .reset_index(name="Movies")
+    )
+
+
+
+def validate_rating_integrity(
+    preference_data: pd.DataFrame,
+    ratings: pd.DataFrame,
+):
+    """Fail closed if a displayed rating disagrees with Letterboxd's ratings.csv."""
+    if (
+        preference_data is None
+        or preference_data.empty
+        or ratings is None
+        or ratings.empty
+        or "Rating" not in ratings.columns
+    ):
+        return preference_data
+
+    data = preference_data.copy()
+
+    # Build source-of-truth maps from the current uploaded export.
+    source = ratings.copy()
+    source["Rating"] = pd.to_numeric(source["Rating"], errors="coerce")
+
+    expected = pd.Series(pd.NA, index=data.index, dtype="Float64")
+
+    if "Letterboxd URI" in data.columns and "Letterboxd URI" in source.columns:
+        data_uri = (
+            data["Letterboxd URI"].fillna("").astype(str).str.strip().str.rstrip("/")
+        )
+        source_uri = (
+            source["Letterboxd URI"].fillna("").astype(str).str.strip().str.rstrip("/")
+        )
+        uri_map = (
+            source.assign(_uri=source_uri)
+            .loc[lambda frame: frame["_uri"].ne("")]
+            .drop_duplicates("_uri", keep="last")
+            .set_index("_uri")["Rating"]
+        )
+        expected = pd.to_numeric(data_uri.map(uri_map), errors="coerce")
+
+    # Replace the attached rating with the export's current value.
+    data["rating"] = expected
+    return data
+
+
+
 def render_your_taste(
     enriched,
     ratings,
     likes,
     profile,
+    embedded=False,
 ):
 
-    st.header("Your Taste")
+    if not embedded:
+        st.header("Your Taste")
 
     # =====================================================
     # PREPARE DATA
@@ -949,6 +1696,10 @@ def render_your_taste(
         enriched,
         ratings,
         likes,
+    )
+    data = validate_rating_integrity(
+        data,
+        ratings,
     )
 
     if "vote_average" not in data.columns:
@@ -1153,7 +1904,7 @@ def render_your_taste(
 
     with left:
 
-        st.subheader("Top Genres")
+        st.subheader("Most Watched Genres")
 
         if "genre_primary" in data.columns:
 
@@ -1206,7 +1957,7 @@ def render_your_taste(
 
     with right:
 
-        st.subheader("Top Directors")
+        st.subheader("Most Watched Directors")
 
         if "director" in data.columns:
 
@@ -1524,59 +2275,164 @@ def render_your_taste(
     st.divider()
 
     # =====================================================
-    # COUNTRIES + LANGUAGES
+    # ACTORS
     # =====================================================
 
-    left, right = st.columns(2)
+    st.subheader(
+        "Most Watched Actors"
+    )
 
-    # -----------------------------------------------------
-    # COUNTRIES
-    # -----------------------------------------------------
+    actor_counts = build_actor_counts(
+        data
+    )
 
-    with left:
+    cast_coverage = 0.0
 
-        st.subheader(
-            "Countries Explored"
+    if (
+        not data.empty
+        and "cast_top" in data.columns
+    ):
+        cast_coverage = (
+            data["cast_top"]
+            .replace("", pd.NA)
+            .notna()
+            .mean()
         )
 
-        if "country_primary" in data.columns:
+    if actor_counts.empty or cast_coverage < 0.80:
+        with_cast = (
+            data["cast_top"].replace("", pd.NA).notna().sum()
+            if "cast_top" in data.columns
+            else 0
+        )
+        st.caption(
+            f"Actor data loaded for {with_cast:,} of {len(data):,} movies "
+            f"in this viewing period ({cast_coverage:.0%})."
+        )
+    else:
+        actor_chart = px.treemap(
+            actor_counts,
+            path=["Actor"],
+            values="Movies",
+            color="Movies",
+            color_continuous_scale=[
+                [0.0, "#3A2412"],
+                [0.55, "#B85C00"],
+                [1.0, "#FF8000"],
+            ],
+        )
 
-            countries = (
-                data["country_primary"]
-                .replace("", pd.NA)
-                .dropna()
-                .value_counts()
-                .head(10)
-                .rename_axis("Country")
-                .reset_index(name="Movies")
+        actor_chart.update_traces(
+            texttemplate=(
+                "<b>%{label}</b><br>"
+                "%{value} movies"
+            ),
+            hovertemplate=(
+                "<b>%{label}</b><br>"
+                "%{value} movies"
+                "<extra></extra>"
+            ),
+        )
+
+        actor_chart.update_layout(
+            height=430,
+            margin=dict(
+                l=0,
+                r=0,
+                t=5,
+                b=0,
+            ),
+            paper_bgcolor=BACKGROUND,
+            plot_bgcolor=BACKGROUND,
+            font=dict(
+                color=TEXT,
+            ),
+            coloraxis_showscale=False,
+        )
+
+        st.plotly_chart(
+            actor_chart,
+            width="stretch",
+        )
+
+    st.divider()
+
+    # =====================================================
+    # COUNTRIES
+    # =====================================================
+
+    st.subheader(
+        "Your Cinema Map"
+    )
+
+    st.caption(
+        "Countries represented in the movies you watched."
+    )
+
+    if "country_primary" in data.columns:
+
+        countries = (
+            data["country_primary"]
+            .replace("", pd.NA)
+            .dropna()
+            .value_counts()
+            .rename_axis("Country")
+            .reset_index(name="Movies")
+        )
+
+        if not countries.empty:
+
+            map_col, list_col = st.columns(
+                [2.15, 1],
+                gap="large",
             )
 
-            if not countries.empty:
+            with map_col:
 
-                country_chart = px.bar(
+                country_chart = px.choropleth(
                     countries,
-                    x="Movies",
-                    y="Country",
-                    orientation="h",
-                    text="Movies",
-                    color_discrete_sequence=[BLUE],
+                    locations="Country",
+                    locationmode="country names",
+                    color="Movies",
+                    hover_name="Country",
+                    hover_data={
+                        "Movies": True,
+                        "Country": False,
+                    },
+                    color_continuous_scale=[
+                        [0.0, "#12301F"],
+                        [0.35, "#087D36"],
+                        [0.7, "#00B849"],
+                        [1.0, "#00E054"],
+                    ],
                 )
 
-                country_chart.update_traces(
-                    textposition="outside",
-                    cliponaxis=False,
+                country_chart.update_geos(
+                    showframe=False,
+                    showcoastlines=False,
+                    showcountries=True,
+                    countrycolor="#303A43",
+                    showland=True,
+                    landcolor="#151A1E",
+                    showocean=True,
+                    oceancolor="#0B0D10",
+                    bgcolor="#0B0D10",
                 )
 
                 country_chart.update_layout(
-                    yaxis={
-                        "categoryorder": "total ascending"
-                    },
-                    xaxis_title="Movies",
-                    yaxis_title=None,
-                )
-
-                country_chart = style_chart(
-                    country_chart
+                    height=300,
+                    margin=dict(
+                        l=0,
+                        r=0,
+                        t=0,
+                        b=0,
+                    ),
+                    paper_bgcolor="#0B0D10",
+                    plot_bgcolor="#0B0D10",
+                    font=dict(
+                        color=TEXT,
+                    ),
+                    coloraxis_showscale=False,
                 )
 
                 st.plotly_chart(
@@ -1584,59 +2440,20 @@ def render_your_taste(
                     width="stretch",
                 )
 
-    # -----------------------------------------------------
-    # LANGUAGES
-    # -----------------------------------------------------
+            with list_col:
 
-    with right:
-
-        st.subheader(
-            "Languages Watched"
-        )
-
-        if "original_language" in data.columns:
-
-            languages = (
-                data["original_language"]
-                .replace("", pd.NA)
-                .dropna()
-                .value_counts()
-                .head(10)
-                .rename_axis("Language")
-                .reset_index(name="Movies")
-            )
-
-            if not languages.empty:
-
-                language_chart = px.bar(
-                    languages,
-                    x="Movies",
-                    y="Language",
-                    orientation="h",
-                    text="Movies",
-                    color_discrete_sequence=[GREEN],
+                st.markdown(
+                    "#### Most Watched Countries"
                 )
 
-                language_chart.update_traces(
-                    textposition="outside",
-                    cliponaxis=False,
+                country_ranking = (
+                    countries
+                    .reset_index(drop=True)
+                    .copy()
                 )
 
-                language_chart.update_layout(
-                    yaxis={
-                        "categoryorder": "total ascending"
-                    },
-                    xaxis_title="Movies",
-                    yaxis_title=None,
-                )
-
-                language_chart = style_chart(
-                    language_chart
-                )
-
-                st.plotly_chart(
-                    language_chart,
-                    width="stretch",
+                render_country_ranking(
+                    country_ranking
                 )
 
     st.divider()
@@ -1665,111 +2482,55 @@ def render_your_taste(
         "Your Ratings"
     )
 
-    favorite_movies = (
-        rated
+    five_star_movies = (
+        rated[
+            rated["rating_numeric"].eq(5.0)
+        ]
         .sort_values(
-            [
-                "rating_numeric",
-                "vote_average",
-            ],
-            ascending=[
-                False,
-                False,
-            ],
+            "vote_average",
+            ascending=False,
+            na_position="last",
         )
-        .head(10)
         .copy()
     )
 
-    lowest_movies = (
-        rated
+    very_low_rated_movies = (
+        rated[
+            rated["rating_numeric"].le(1.0)
+        ]
         .sort_values(
-            [
-                "rating_numeric",
-                "vote_average",
-            ],
-            ascending=[
-                True,
-                True,
-            ],
+            "rating_numeric",
+            ascending=True,
+            na_position="last",
         )
-        .head(10)
         .copy()
     )
 
-    left, right = st.columns(2)
+    st.markdown(
+        "#### Five-Star Movies"
+    )
 
-    with left:
+    st.caption(
+        "Every movie you rated 5 out of 5."
+    )
 
-        st.markdown(
-            "#### Highest Rated Movies"
-        )
+    render_movie_poster_carousel(
+        five_star_movies,
+        "No 5-star movies in this viewing period.",
+    )
 
-        favorite_columns = [
-            column
-            for column in [
-                "Name",
-                "Year",
-                "director",
-                "rating_numeric",
-            ]
-            if column in favorite_movies.columns
-        ]
+    st.markdown(
+        "#### Lowest Rated Movies"
+    )
 
-        favorite_display = (
-            favorite_movies[
-                favorite_columns
-            ]
-            .rename(
-                columns={
-                    "Name": "Movie",
-                    "director": "Director",
-                    "rating_numeric": "Rating",
-                }
-            )
-        )
+    st.caption(
+        "Movies you rated 1 out of 5 or lower."
+    )
 
-        st.dataframe(
-            favorite_display,
-            hide_index=True,
-            width="stretch",
-        )
-
-    with right:
-
-        st.markdown(
-            "#### Lowest Rated Movies"
-        )
-
-        lowest_columns = [
-            column
-            for column in [
-                "Name",
-                "Year",
-                "director",
-                "rating_numeric",
-            ]
-            if column in lowest_movies.columns
-        ]
-
-        lowest_display = (
-            lowest_movies[
-                lowest_columns
-            ]
-            .rename(
-                columns={
-                    "Name": "Movie",
-                    "director": "Director",
-                    "rating_numeric": "Rating",
-                }
-            )
-        )
-
-        st.dataframe(
-            lowest_display,
-            hide_index=True,
-            width="stretch",
-        )
+    render_movie_poster_carousel(
+        very_low_rated_movies,
+        "No movies rated 1 or lower in this viewing period.",
+    )
 
     st.divider()
 
@@ -2496,7 +3257,6 @@ def render_you_vs_crowd(
         disagreements[
             [
                 "Name",
-                "Year",
                 "Your Rating",
                 "TMDB Rating",
                 "Difference",
@@ -2540,10 +3300,8 @@ def render_you_vs_crowd(
         )
     )
 
-    st.dataframe(
-        disagreement_display,
-        hide_index=True,
-        width="stretch",
+    render_compact_table(
+        disagreement_display
     )
 
     st.divider()
@@ -2775,24 +3533,294 @@ def render_you_vs_crowd(
 # RECOMMENDATIONS
 # =========================================================
 
+
+def render_recommendation_carousel(
+    movies: pd.DataFrame,
+):
+    if movies is None or movies.empty:
+        return
+
+    cards = []
+
+    for _, movie in movies.iterrows():
+        title = movie.get("title")
+        title = (
+            str(title)
+            if pd.notna(title)
+            and str(title).strip()
+            else "Unknown Movie"
+        )
+
+        year = movie.get("Year")
+        year_text = (
+            str(int(year))
+            if pd.notna(year)
+            else ""
+        )
+
+        genre = movie.get("genre_primary")
+        genre_text = (
+            str(genre)
+            if pd.notna(genre)
+            and str(genre).strip()
+            else ""
+        )
+
+        poster_path = movie.get("poster_path")
+
+        if (
+            pd.notna(poster_path)
+            and str(poster_path).strip()
+        ):
+            poster_html = (
+                '<img class="lb-rec-poster" src="'
+                'https://image.tmdb.org/t/p/w500'
+                + html.escape(str(poster_path))
+                + '" alt="'
+                + html.escape(title)
+                + '">'
+            )
+        else:
+            poster_html = (
+                '<div class="lb-rec-poster-missing">'
+                'Poster unavailable'
+                '</div>'
+            )
+
+        info = " · ".join(
+            value
+            for value in [
+                year_text,
+                genre_text,
+            ]
+            if value
+        )
+
+        match = movie.get("taste_match_score")
+        tmdb_rating = movie.get("vote_average")
+
+        score_text = (
+            f"Taste Score · {float(match):.0f}/100"
+            if pd.notna(match)
+            else "Taste Score unavailable"
+        )
+
+        tmdb_text = (
+            f"TMDB {float(tmdb_rating):.1f}/10"
+            if pd.notna(tmdb_rating)
+            else "TMDB rating unavailable"
+        )
+
+        cards.append(
+            '<div class="lb-rec-card">'
+            + poster_html
+            + '<div class="recommendation-title">'
+            + html.escape(title)
+            + '</div>'
+            + '<div class="recommendation-info">'
+            + html.escape(info)
+            + '</div>'
+            + '<div class="recommendation-match">'
+            + html.escape(score_text)
+            + '</div>'
+            + '<div class="recommendation-tmdb">'
+            + html.escape(tmdb_text)
+            + '</div>'
+            + '</div>'
+        )
+
+    st.markdown(
+        '<div class="lb-rec-carousel">'
+        + "".join(cards)
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+
+def normalized_movie_key(title, year):
+    title_key = str(title or "").strip().casefold()
+    try:
+        year_key = str(int(float(year))) if pd.notna(year) else ""
+    except (TypeError, ValueError):
+        year_key = str(year or "").strip()
+    return title_key, year_key
+
+
+def remove_watched_recommendations(
+    recommendations: pd.DataFrame,
+    enriched: pd.DataFrame,
+) -> pd.DataFrame:
+    """Hard safety filter for already-watched movies using ID plus title/year."""
+    if recommendations is None or recommendations.empty:
+        return recommendations
+    if enriched is None or enriched.empty:
+        return recommendations
+
+    result = recommendations.copy()
+
+    watched_ids = set(
+        pd.to_numeric(
+            enriched.get("tmdb_id", pd.Series(dtype=float)),
+            errors="coerce",
+        ).dropna().astype(int)
+    )
+
+    watched_keys = set()
+    for _, movie in enriched.iterrows():
+        watched_keys.add(
+            normalized_movie_key(
+                movie.get("Name", movie.get("title", "")),
+                movie.get("Year", movie.get("release_year", "")),
+            )
+        )
+
+    def already_watched(row):
+        tmdb_id = pd.to_numeric(
+            pd.Series([row.get("tmdb_id")]),
+            errors="coerce",
+        ).iloc[0]
+        if pd.notna(tmdb_id) and int(tmdb_id) in watched_ids:
+            return True
+
+        return normalized_movie_key(
+            row.get("title", row.get("Name", "")),
+            row.get("Year", row.get("release_year", "")),
+        ) in watched_keys
+
+    return result.loc[
+        ~result.apply(already_watched, axis=1)
+    ].reset_index(drop=True)
+
+
+def unique_recommendation_rows(
+    rows: dict,
+    ranked: pd.DataFrame,
+    limit: int = 12,
+) -> dict:
+    """Deduplicate rows and refill each row from its own eligible candidate pool."""
+    used = set()
+    cleaned = {}
+
+    def movie_identity(movie):
+        tmdb_id = pd.to_numeric(
+            pd.Series([movie.get("tmdb_id")]),
+            errors="coerce",
+        ).iloc[0]
+        if pd.notna(tmdb_id):
+            return ("tmdb", int(tmdb_id))
+        return (
+            "movie",
+            normalized_movie_key(
+                movie.get("title", movie.get("Name", "")),
+                movie.get("Year", movie.get("release_year", "")),
+            ),
+        )
+
+    for row_name, candidates in rows.items():
+        if candidates is None or candidates.empty:
+            continue
+
+        selected = []
+        for index, movie in candidates.iterrows():
+            key = movie_identity(movie)
+            if key in used:
+                continue
+            used.add(key)
+            selected.append(index)
+            if len(selected) >= limit:
+                break
+
+        if selected:
+            cleaned[row_name] = candidates.loc[selected].copy()
+
+    return cleaned
+
+
+def _recommendation_rows(
+    data: pd.DataFrame,
+    enriched: pd.DataFrame,
+    ratings: pd.DataFrame,
+    likes: pd.DataFrame,
+):
+    ranked = data.sort_values(
+        ["recommendation_score", "taste_match_score", "vote_average"],
+        ascending=[False, False, False],
+        na_position="last",
+    ).copy()
+
+    preferences = attach_user_preferences(enriched, ratings, likes)
+
+    rows = {}
+    rows["Top Picks for You"] = ranked.copy()
+
+    # Pull from a dedicated TMDB candidate pool for the user's top five directors.
+    favorite_directors = get_favorite_directors(
+        preferences,
+        limit=5,
+    )
+
+    director_pool = ranked[
+        ranked["director"].isin(favorite_directors)
+    ].copy()
+    if not director_pool.empty:
+        rows["From Directors You Love"] = director_pool
+
+    valid_popularity = ranked["popularity"].dropna()
+    if not valid_popularity.empty:
+        popularity_cutoff = valid_popularity.quantile(0.55)
+        hidden = ranked[
+            ranked["popularity"].le(popularity_cutoff)
+            & ranked["vote_average"].ge(6.7)
+        ].copy()
+        if not hidden.empty:
+            rows["Hidden Gems for You"] = hidden
+
+    exploration = ranked[
+        ranked["taste_match_score"].between(42, 80, inclusive="both")
+        & ranked["vote_average"].ge(6.8)
+    ].sort_values(
+        ["vote_average", "recommendation_score"],
+        ascending=[False, False],
+    )
+    if not exploration.empty:
+        rows["Outside Your Comfort Zone"] = exploration
+
+    safe_bets = ranked[
+        ranked["vote_average"].ge(7.0)
+        & ranked["taste_match_score"].ge(62)
+    ].copy()
+    if not safe_bets.empty:
+        rows["Safe Bets"] = safe_bets
+
+    return unique_recommendation_rows(
+        rows,
+        ranked,
+        limit=12,
+    )
+
+
 def render_recommendations(
     recommendations,
     profile,
+    enriched=None,
+    ratings=None,
+    likes=None,
 ):
-
     st.header("Recommendations")
-
     st.caption(
-        "Movies selected from your taste profile based on genres, "
-        "directors, countries, languages and decades."
+        "A multi-stage recommendation system: candidate discovery, quality "
+        "filtering, personalized ranking and diversity-aware re-ranking."
     )
 
     if recommendations is None or recommendations.empty:
         st.info("No recommendations were found.")
         return
 
-    data = recommendations.copy()
-
+    data = remove_watched_recommendations(
+        recommendations.copy(),
+        enriched,
+    )
     expected_columns = {
         "title": pd.NA,
         "Year": pd.NA,
@@ -2803,26 +3831,24 @@ def render_recommendations(
         "popularity": pd.NA,
         "poster_path": pd.NA,
         "taste_match_score": pd.NA,
+        "recommendation_score": pd.NA,
     }
-
     for column, default_value in expected_columns.items():
         if column not in data.columns:
             data[column] = default_value
 
+    if data.empty:
+        st.info("No new unwatched recommendations were found.")
+        return
+
     for column in [
         "taste_match_score",
+        "recommendation_score",
         "vote_average",
         "popularity",
         "Year",
     ]:
-        data[column] = pd.to_numeric(
-            data[column],
-            errors="coerce",
-        )
-
-    data["decade"] = (
-        (data["Year"] // 10) * 10
-    ).astype("Int64")
+        data[column] = pd.to_numeric(data[column], errors="coerce")
 
     best_match = data["taste_match_score"].max()
     valid_genres = data["genre_primary"].replace("", pd.NA).dropna()
@@ -2831,322 +3857,100 @@ def render_recommendations(
         if not valid_genres.empty
         else "N/A"
     )
-    valid_decades = data["decade"].dropna()
-    top_decade = (
-        f"{int(valid_decades.value_counts().index[0])}s"
-        if not valid_decades.empty
-        else "N/A"
-    )
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     col1.metric("Recommendations", len(data))
     col2.metric(
         "Best Taste Score",
         f"{best_match:.0f}/100" if pd.notna(best_match) else "N/A",
     )
     col3.metric("Most Recommended Genre", top_genre)
-    col4.metric("Most Recommended Decade", top_decade)
 
     st.divider()
-    st.subheader("Top Recommendations")
-    st.caption(
-        "Taste Score is a content-based recommendation heuristic, "
-        "not a probability."
-    )
 
-    top_recommendations = (
-        data.sort_values(
-            ["taste_match_score", "vote_average"],
-            ascending=[False, False],
-            na_position="last",
+    if enriched is not None and ratings is not None and likes is not None:
+        rows = _recommendation_rows(
+            data,
+            enriched,
+            ratings,
+            likes,
         )
-        .head(12)
-        .copy()
-    )
+    else:
+        rows = {"Top Picks for You": data.head(12)}
 
-    for start_index in range(0, len(top_recommendations), 4):
-        row = top_recommendations.iloc[start_index:start_index + 4]
-        columns = st.columns(4, gap="medium")
+    row_captions = {
+        "Top Picks for You":
+            "Your strongest overall matches after quality and diversity re-ranking.",
+        "From Directors You Love":
+            "Unwatched recommendations from directors that appear repeatedly in your taste history.",
+        "Hidden Gems for You":
+            "Strong personal matches with lower popularity.",
+        "Outside Your Comfort Zone":
+            "Highly rated films that sit just outside your strongest taste signals.",
+        "Safe Bets":
+            "Strong personal matches that are also highly rated by TMDB users.",
+    }
 
-        for column, (_, movie) in zip(columns, row.iterrows()):
-            with column:
-                title = movie.get("title")
-                title = (
-                    str(title)
-                    if pd.notna(title) and str(title).strip()
-                    else "Unknown Movie"
-                )
+    for row_title, row_movies in rows.items():
+        if row_movies is None or row_movies.empty:
+            continue
+        st.subheader(row_title)
+        st.caption(row_captions.get(row_title, "Personalized recommendations."))
+        render_recommendation_carousel(row_movies)
+        st.divider()
 
-                year = movie.get("Year")
-                year_text = str(int(year)) if pd.notna(year) else ""
-
-                genre = movie.get("genre_primary")
-                genre_text = (
-                    str(genre)
-                    if pd.notna(genre) and str(genre).strip()
-                    else ""
-                )
-
-                poster_path = movie.get("poster_path")
-
-                if pd.notna(poster_path) and str(poster_path).strip():
-                    st.image(
-                        f"https://image.tmdb.org/t/p/w500{poster_path}",
-                        width="stretch",
-                    )
-                else:
-                    st.markdown(
-                        """
-                        <div style="
-                            width:100%; aspect-ratio:2/3;
-                            background:#1F2A36;
-                            border:1px solid #2C3440;
-                            border-radius:8px;
-                            display:flex; align-items:center;
-                            justify-content:center;
-                            color:#A8B3BD; font-size:13px;">
-                            Poster unavailable
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                info = " · ".join(
-                    value for value in [year_text, genre_text] if value
-                )
-                match = movie.get("taste_match_score")
-                tmdb_rating = movie.get("vote_average")
-
-                st.markdown(
-                    f'<div class="recommendation-title">{title}</div>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f'<div class="recommendation-info">{info}</div>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    '<div class="recommendation-match">'
-                    + (
-                        f"Taste Score · {float(match):.0f}/100"
-                        if pd.notna(match)
-                        else "Taste Score unavailable"
-                    )
-                    + '</div>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    '<div class="recommendation-tmdb">'
-                    + (
-                        f"TMDB {float(tmdb_rating):.1f}/10"
-                        if pd.notna(tmdb_rating)
-                        else "TMDB rating unavailable"
-                    )
-                    + '</div>',
-                    unsafe_allow_html=True,
-                )
-
-    st.divider()
-    st.subheader("Recommendations by Decade")
-
-    decade_data = (
-        data["decade"].dropna().astype(int)
-        .value_counts().sort_index()
-        .rename_axis("Decade")
-        .reset_index(name="Movies")
-    )
-
-    if not decade_data.empty:
-        decade_data["Decade"] = decade_data["Decade"].astype(str) + "s"
-        decade_chart = px.bar(
-            decade_data,
-            x="Decade",
-            y="Movies",
-            text="Movies",
-            color_discrete_sequence=[BLUE],
-        )
-        decade_chart.update_traces(textposition="outside", cliponaxis=False)
-        decade_chart.update_layout(
-            showlegend=False,
-            xaxis_title=None,
-            yaxis_title="Recommendations",
-            height=420,
-        )
-        st.plotly_chart(
-            style_chart(decade_chart, show_legend=False),
-            width="stretch",
-        )
-
-    st.divider()
-    left, right = st.columns(2)
-
-    with left:
-        st.subheader("Hidden Gems")
-        st.caption("Strong taste scores with lower TMDB popularity.")
-
-        valid_popularity = data["popularity"].dropna()
-        if not valid_popularity.empty:
-            popularity_median = valid_popularity.median()
-            hidden_gems = (
-                data[
-                    data["popularity"].notna()
-                    & (data["popularity"] <= popularity_median)
-                    & data["taste_match_score"].notna()
-                ]
-                .sort_values(
-                    ["taste_match_score", "vote_average"],
-                    ascending=[False, False],
-                    na_position="last",
-                )
-                .head(8)
-                .copy()
-            )
-        else:
-            hidden_gems = pd.DataFrame()
-
-        if not hidden_gems.empty:
-            hidden_gems["Score Label"] = hidden_gems["taste_match_score"].map(
-                lambda value: f"{value:.0f}/100"
-            )
-            hidden_chart = px.bar(
-                hidden_gems,
-                x="taste_match_score",
-                y="title",
-                orientation="h",
-                text="Score Label",
-                color_discrete_sequence=[GREEN],
-            )
-            hidden_chart.update_traces(
-                textposition="inside",
-                insidetextanchor="end",
-                textfont={"color": TEXT, "size": 12},
-            )
-            hidden_chart.update_xaxes(range=[0, 100])
-            hidden_chart.update_yaxes(
-                categoryorder="total ascending",
-                automargin=True,
-            )
-            hidden_chart.update_layout(
-                showlegend=False,
-                xaxis_title="Taste Score",
-                yaxis_title=None,
-                height=460,
-            )
-            st.plotly_chart(
-                style_chart(hidden_chart, show_legend=False),
-                width="stretch",
-            )
-        else:
-            st.info("Not enough popularity data to identify hidden gems.")
-
-    with right:
-        st.subheader("Safe Bets")
-        st.caption(
-            "Strong taste scores that are also highly rated by TMDB users."
-        )
-
-        safe_bets = (
-            data[
-                data["vote_average"].notna()
-                & (data["vote_average"] >= 7)
-                & data["taste_match_score"].notna()
-            ]
-            .sort_values(
-                ["taste_match_score", "vote_average"],
-                ascending=[False, False],
-                na_position="last",
-            )
-            .head(8)
-            .copy()
-        )
-
-        if not safe_bets.empty:
-            safe_bets["Score Label"] = safe_bets["taste_match_score"].map(
-                lambda value: f"{value:.0f}/100"
-            )
-            safe_chart = px.bar(
-                safe_bets,
-                x="taste_match_score",
-                y="title",
-                orientation="h",
-                text="Score Label",
-                color_discrete_sequence=[ORANGE],
-            )
-            safe_chart.update_traces(
-                textposition="inside",
-                insidetextanchor="end",
-                textfont={"color": TEXT, "size": 12},
-            )
-            safe_chart.update_xaxes(range=[0, 100])
-            safe_chart.update_yaxes(
-                categoryorder="total ascending",
-                automargin=True,
-            )
-            safe_chart.update_layout(
-                showlegend=False,
-                xaxis_title="Taste Score",
-                yaxis_title=None,
-                height=460,
-            )
-            st.plotly_chart(
-                style_chart(safe_chart, show_legend=False),
-                width="stretch",
-            )
-        else:
-            st.info("No highly rated safe bets were found.")
-
-    st.divider()
     st.subheader("Directors Worth Discovering")
     st.caption(
-        "Directors appearing repeatedly among your personalized recommendations."
+        "A ranking of directors across your strongest unwatched recommendations."
     )
 
-    director_data = data.copy()
-    director_data["director"] = director_data["director"].replace("", pd.NA)
-
     director_summary = (
-        director_data.dropna(subset=["director"])
+        data.assign(
+            director=data["director"].replace("", pd.NA)
+        )
+        .dropna(subset=["director"])
         .groupby("director")
         .agg(
             Recommendations=("title", "count"),
-            Average_Match=("taste_match_score", "mean"),
-            Average_TMDB=("vote_average", "mean"),
+            Average_Taste_Score=("taste_match_score", "mean"),
         )
         .reset_index()
         .sort_values(
-            ["Recommendations", "Average_Match"],
+            ["Average_Taste_Score", "Recommendations"],
             ascending=[False, False],
         )
         .head(10)
+        .sort_values("Average_Taste_Score")
     )
 
     if not director_summary.empty:
-        director_summary["Label"] = director_summary["Recommendations"].astype(str)
         director_chart = px.bar(
             director_summary,
-            x="Recommendations",
+            x="Average_Taste_Score",
             y="director",
             orientation="h",
-            text="Label",
-            color_discrete_sequence=[BLUE],
+            text="Average_Taste_Score",
+            hover_data={"Recommendations": True},
         )
-        director_chart.update_traces(textposition="outside", cliponaxis=False)
-        director_chart.update_yaxes(
-            categoryorder="total ascending",
-            automargin=True,
+        director_chart.update_traces(
+            texttemplate="%{text:.0f}",
+            textposition="outside",
+            cliponaxis=False,
         )
         director_chart.update_layout(
-            showlegend=False,
-            xaxis_title="Recommended Movies",
+            xaxis_title="Average Taste Score",
             yaxis_title=None,
-            height=500,
+            showlegend=False,
+            height=430,
         )
         st.plotly_chart(
-            style_chart(director_chart, show_legend=False),
+            style_chart(director_chart),
             width="stretch",
         )
     else:
-        st.info("Not enough director information is available.")
+        st.caption(
+            "No director data is available for this recommendation set."
+        )
 
 
 # =========================================================
@@ -3856,13 +4660,13 @@ else:
             "Analyzing your movie taste...",
         )
 
-        (
-            profile,
-            recommendations,
-        ) = get_recommendations(
+        preference_data = attach_user_preferences(
             enriched,
             ratings,
             likes,
+        )
+        profile = build_taste_profile(
+            preference_data
         )
 
         # -------------------------------------------------
@@ -3886,97 +4690,130 @@ else:
         )
 
         # -------------------------------------------------
-        # NAVIGATION
+        # GLOBAL PERIOD FILTER
         # -------------------------------------------------
+
+        available_years = []
+
+        if (
+            not diary.empty
+            and "Watched Date" in diary.columns
+        ):
+            available_years = sorted(
+                diary["Watched Date"]
+                .dropna()
+                .dt.year
+                .astype(int)
+                .unique()
+                .tolist(),
+                reverse=True,
+            )
+
+        period_options = (
+            ["All Time"]
+            + [
+                str(year)
+                for year in available_years
+            ]
+        )
+
+        st.markdown(
+            '<div class="period-heading">Explore your film history</div>'
+            '<div class="period-copy">'
+            'Switch between your complete profile and a yearly retrospective.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        selected_year = st.selectbox(
+            "Viewing period",
+            period_options,
+            index=0,
+            key="dashboard_period",
+        )
 
         (
-            overview_tab,
-            taste_tab,
-            crowd_tab,
-            recommendations_tab,
-            history_tab,
-            blend_tab,
-            ) = st.tabs(
-                [
-                    "Overview",
-                    "Your Taste",
-                    "You vs Crowd",
-                    "Recommendations",
-                    "History",
-                    "Movie Blend",
-                ],
-                key="main_navigation",
-                on_change="rerun",
+            period_watched,
+            period_ratings,
+            period_diary,
+            period_reviews,
+            period_likes,
+            period_enriched,
+        ) = filter_letterboxd_period(
+            selected_year,
+            watched,
+            ratings,
+            diary,
+            reviews,
+            likes,
+            enriched,
+        )
+
+        if selected_year == "All Time":
+            period_profile = profile
+        else:
+            period_preferences = attach_user_preferences(
+                period_enriched,
+                period_ratings,
+                period_likes,
+            )
+
+            period_profile = build_taste_profile(
+                period_preferences
             )
 
         # -------------------------------------------------
-        # OVERVIEW
+        # NAVIGATION — lazy rendering
         # -------------------------------------------------
 
-        with overview_tab:
+        section = st.segmented_control(
+            "Dashboard section",
+            options=[
+                "Overview",
+                "You vs Crowd",
+                "Recommendations",
+                "Movie Blend",
+            ],
+            default="Overview",
+            key="main_navigation_v12",
+            label_visibility="collapsed",
+        )
 
+        if section == "Overview":
             render_overview(
-                watched,
-                ratings,
-                diary,
-                reviews,
-                likes,
-                enriched,
+                period_watched,
+                period_ratings,
+                period_diary,
+                period_reviews,
+                period_likes,
+                period_enriched,
+                period_profile,
+                selected_year=selected_year,
             )
 
-        # -------------------------------------------------
-        # YOUR TASTE
-        # -------------------------------------------------
-
-        with taste_tab:
-
-            render_your_taste(
-                enriched,
-                ratings,
-                likes,
-                profile,
-            )
-
-        # -------------------------------------------------
-        # YOU VS CROWD
-        # -------------------------------------------------
-
-        with crowd_tab:
-
+        elif section == "You vs Crowd":
             render_you_vs_crowd(
-                enriched,
-                ratings,
+                period_enriched,
+                period_ratings,
             )
 
-        # -------------------------------------------------
-        # RECOMMENDATIONS
-        # -------------------------------------------------
-
-        with recommendations_tab:
+        elif section == "Recommendations":
+            with st.spinner("Building your personalized recommendations..."):
+                recommendation_profile, recommendations = get_recommendations(
+                    enriched,
+                    ratings,
+                    likes,
+                )
 
             render_recommendations(
                 recommendations,
-                profile,
+                recommendation_profile,
+                enriched=enriched,
+                ratings=ratings,
+                likes=likes,
             )
 
-        # -------------------------------------------------
-        # HISTORY
-        # -------------------------------------------------
-
-        with history_tab:
-
-            render_history(
-                enriched,
-                ratings,
-                likes,
-            )
-
-        # -------------------------------------------------
-        # MOVIE BLEND
-        # -------------------------------------------------
-
-        with blend_tab:
-
+        elif section == "Movie Blend":
             render_create_blend(
                 enriched,
                 ratings,

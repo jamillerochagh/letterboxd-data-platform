@@ -101,38 +101,137 @@ def get_cached_movies() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def ensure_movies_cast_column() -> bool:
+    """Add cast_top to legacy caches without breaking older deployments."""
+    try:
+        engine = get_engine()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE raw.movies "
+                    "ADD COLUMN IF NOT EXISTS cast_top TEXT"
+                )
+            )
+        return True
+    except Exception as error:
+        print(
+            "DATABASE MIGRATION ERROR | "
+            f"{type(error).__name__}: {error}"
+        )
+        return False
+
+
 def upsert_movies(df: pd.DataFrame) -> bool:
-    """Write to shared cache; failure is non-fatal because TMDB data stays in memory."""
+    """
+    Insert new TMDB rows and update existing rows.
+
+    PostgreSQL cache failure remains non-fatal.
+    """
     if df.empty or "tmdb_id" not in df.columns:
         return True
 
     try:
         engine = get_engine()
-        existing = get_cached_movies()
+        ensure_movies_cast_column()
 
         clean_df = df.copy()
-        clean_df["tmdb_id"] = pd.to_numeric(clean_df["tmdb_id"], errors="coerce")
-        clean_df = clean_df.dropna(subset=["tmdb_id"])
-        clean_df["tmdb_id"] = clean_df["tmdb_id"].astype("int64")
-        clean_df = clean_df.drop_duplicates(subset=["tmdb_id"])
-
-        if not existing.empty and "tmdb_id" in existing.columns:
-            existing_ids = set(
-                pd.to_numeric(existing["tmdb_id"], errors="coerce")
-                .dropna().astype("int64")
-            )
-            clean_df = clean_df[~clean_df["tmdb_id"].isin(existing_ids)].copy()
+        clean_df["tmdb_id"] = pd.to_numeric(
+            clean_df["tmdb_id"],
+            errors="coerce",
+        )
+        clean_df = clean_df.dropna(
+            subset=["tmdb_id"]
+        )
+        clean_df["tmdb_id"] = clean_df[
+            "tmdb_id"
+        ].astype("int64")
+        clean_df = clean_df.drop_duplicates(
+            subset=["tmdb_id"],
+            keep="last",
+        )
 
         if clean_df.empty:
             return True
 
-        clean_df.to_sql(
-            name="movies", con=engine, schema="raw", if_exists="append",
-            index=False, method="multi", chunksize=500,
+        columns = [
+            column
+            for column in clean_df.columns
+            if column in {
+                "tmdb_id",
+                "title",
+                "release_year",
+                "director",
+                "cast_top",
+                "genre_primary",
+                "genre_secondary",
+                "genre_tertiary",
+                "country_primary",
+                "original_language",
+                "runtime_min",
+                "vote_average",
+                "popularity",
+                "tagline",
+                "overview",
+                "poster_path",
+            }
+        ]
+
+        clean_df = clean_df[columns].copy()
+
+        records = clean_df.where(
+            pd.notna(clean_df),
+            None,
+        ).to_dict(orient="records")
+
+        if not records:
+            return True
+
+        quoted_columns = ", ".join(
+            f'"{column}"'
+            for column in columns
         )
-        print(f"DATABASE CACHE | cached={len(clean_df)} new movies")
+        value_columns = ", ".join(
+            f":{column}"
+            for column in columns
+        )
+
+        update_columns = [
+            column
+            for column in columns
+            if column != "tmdb_id"
+        ]
+
+        update_clause = ", ".join(
+            f'"{column}" = EXCLUDED."{column}"'
+            for column in update_columns
+        )
+
+        statement = text(
+            f"""
+            INSERT INTO raw.movies ({quoted_columns})
+            VALUES ({value_columns})
+            ON CONFLICT (tmdb_id)
+            WHERE tmdb_id IS NOT NULL
+            DO UPDATE SET {update_clause}
+            """
+        )
+
+        with engine.begin() as connection:
+            connection.execute(
+                statement,
+                records,
+            )
+
+        print(
+            "DATABASE CACHE | "
+            f"upserted={len(records)} movies"
+        )
         return True
 
     except Exception as error:
-        print(f"DATABASE CACHE WRITE ERROR | {type(error).__name__}: {error}")
+        print(
+            "DATABASE CACHE WRITE ERROR | "
+            f"{type(error).__name__}: {error}"
+        )
         return False
+
