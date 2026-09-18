@@ -57,6 +57,21 @@ st.set_page_config(
     layout="wide",
 )
 
+# =========================================================
+# EXCLUSIVE MOVIE BLEND INVITATION ROUTE
+# =========================================================
+# A shared ?blend=<uuid> link is its own app flow. The guest must not
+# enter the normal Letterboxd dashboard/upload pipeline.
+_invitation_blend_id = st.query_params.get("blend")
+
+if _invitation_blend_id:
+    render_blend_invitation(
+        str(_invitation_blend_id)
+    )
+    st.stop()
+
+
+
 
 # =========================================================
 # LETTERBOXD THEME
@@ -4747,144 +4762,193 @@ else:
         uploaded_file.seek(0)
 
         # -------------------------------------------------
-        # EXTRACT EXPORT
+        # FULL ANALYSIS CACHE
         # -------------------------------------------------
-
-        set_analysis_progress(
-            10,
-            "Extracting your Letterboxd data...",
+        # Streamlit reruns the script on every button click. Reuse the
+        # already-prepared upload so Movie Blend interactions do not repeat
+        # ZIP extraction, CSV loading, joins, or taste-profile construction.
+        cached_bundle = st.session_state.get(
+            "analysis_bundle"
         )
 
-        temp_dir = (
-            extract_letterboxd_zip(
-                uploaded_file
-            )
-        )
-
-        export_dir = (
-            find_export_directory(
-                temp_dir
-            )
-        )
-
-        # -------------------------------------------------
-        # LOAD DATA
-        # -------------------------------------------------
-
-        set_analysis_progress(
-            15,
-            "Loading your movie history...",
-        )
-
-        data = (
-            load_letterboxd_data(
-                export_dir
-            )
-        )
-
-        watched = data[
-            "watched"
-        ]
-
-        # -------------------------------------------------
-        # PREPARE DATA
-        # -------------------------------------------------
-
-        set_analysis_progress(
-            20,
-            "Preparing ratings and diary...",
-        )
-
-        ratings = prepare_ratings(
-            data[
-                "ratings"
-            ]
-        )
-
-        diary = prepare_diary(
-            data[
-                "diary"
-            ]
-        )
-
-        reviews = data[
-            "reviews"
-        ]
-
-        likes = data[
-            "likes"
-        ]
-
-        # -------------------------------------------------
-        # MOVIE ENRICHMENT
-        # -------------------------------------------------
-
-        set_analysis_progress(
-            25,
-            "Preparing movie data...",
-        )
-
-        def update_movie_enrichment(
-            movie_progress: float,
+        if (
+            cached_bundle is not None
+            and cached_bundle.get("fingerprint")
+            == upload_fingerprint
         ):
-            """
-            Movie enrichment represents 25% -> 75%
-            of the complete analysis.
-            """
+            analysis_progress.empty()
 
-            overall_percentage = (
-                25
-                + int(movie_progress * 50)
-            )
+            watched = cached_bundle["watched"]
+            ratings = cached_bundle["ratings"]
+            diary = cached_bundle["diary"]
+            reviews = cached_bundle["reviews"]
+            likes = cached_bundle["likes"]
+            enriched = cached_bundle["enriched"]
+            preference_data = cached_bundle[
+                "preference_data"
+            ]
+            profile = cached_bundle["profile"]
+
+        else:
+            # -------------------------------------------------
+            # EXTRACT EXPORT
+            # -------------------------------------------------
 
             set_analysis_progress(
-                overall_percentage,
+                10,
+                "Extracting your Letterboxd data...",
+            )
+
+            temp_dir = (
+                extract_letterboxd_zip(
+                    uploaded_file
+                )
+            )
+
+            export_dir = (
+                find_export_directory(
+                    temp_dir
+                )
+            )
+
+            # -------------------------------------------------
+            # LOAD DATA
+            # -------------------------------------------------
+
+            set_analysis_progress(
+                15,
+                "Loading your movie history...",
+            )
+
+            data = (
+                load_letterboxd_data(
+                    export_dir
+                )
+            )
+
+            watched = data[
+                "watched"
+            ]
+
+            # -------------------------------------------------
+            # PREPARE DATA
+            # -------------------------------------------------
+
+            set_analysis_progress(
+                20,
+                "Preparing ratings and diary...",
+            )
+
+            ratings = prepare_ratings(
+                data[
+                    "ratings"
+                ]
+            )
+
+            diary = prepare_diary(
+                data[
+                    "diary"
+                ]
+            )
+
+            reviews = data[
+                "reviews"
+            ]
+
+            likes = data[
+                "likes"
+            ]
+
+            # -------------------------------------------------
+            # MOVIE ENRICHMENT
+            # -------------------------------------------------
+
+            set_analysis_progress(
+                25,
                 "Preparing movie data...",
             )
 
-        enriched = get_enriched_movies(
-            watched,
-            upload_fingerprint,
-            progress_callback=update_movie_enrichment,
-        )
+            def update_movie_enrichment(
+                movie_progress: float,
+            ):
+                """
+                Movie enrichment represents 25% -> 75%
+                of the complete analysis.
+                """
 
-        # -------------------------------------------------
-        # TASTE + RECOMMENDATIONS
-        # -------------------------------------------------
+                overall_percentage = (
+                    25
+                    + int(movie_progress * 50)
+                )
 
-        set_analysis_progress(
-            80,
-            "Analyzing your movie taste...",
-        )
+                set_analysis_progress(
+                    overall_percentage,
+                    "Preparing movie data...",
+                )
 
-        preference_data = attach_user_preferences(
-            enriched,
-            ratings,
-            likes,
-        )
-        profile = build_taste_profile(
-            preference_data
-        )
+            enriched = get_enriched_movies(
+                watched,
+                upload_fingerprint,
+                progress_callback=update_movie_enrichment,
+            )
+
+            # -------------------------------------------------
+            # TASTE + RECOMMENDATIONS
+            # -------------------------------------------------
+
+            set_analysis_progress(
+                80,
+                "Analyzing your movie taste...",
+            )
+
+            preference_data = attach_user_preferences(
+                enriched,
+                ratings,
+                likes,
+            )
+            profile = build_taste_profile(
+                preference_data
+            )
+
+
+            st.session_state[
+                "analysis_bundle"
+            ] = {
+                "fingerprint": upload_fingerprint,
+                "watched": watched,
+                "ratings": ratings,
+                "diary": diary,
+                "reviews": reviews,
+                "likes": likes,
+                "enriched": enriched,
+                "preference_data": preference_data,
+                "profile": profile,
+            }
 
         # -------------------------------------------------
         # FINALIZE
         # -------------------------------------------------
 
-        set_analysis_progress(
-            95,
-            "Building your dashboard...",
-        )
+        if not (
+            cached_bundle is not None
+            and cached_bundle.get("fingerprint")
+            == upload_fingerprint
+        ):
+            set_analysis_progress(
+                95,
+                "Building your dashboard...",
+            )
 
-        set_analysis_progress(
-            100,
-            "Your Letterboxd analysis is ready.",
-        )
+            set_analysis_progress(
+                100,
+                "Your Letterboxd analysis is ready.",
+            )
 
-        analysis_progress.empty()
+            analysis_progress.empty()
 
-        st.success(
-            "Your Letterboxd analysis is ready."
-        )
+            st.success(
+                "Your Letterboxd analysis is ready."
+            )
 
         # -------------------------------------------------
         # GLOBAL PERIOD FILTER

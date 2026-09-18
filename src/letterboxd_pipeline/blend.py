@@ -362,3 +362,150 @@ def delete_expired_blends() -> int:
         )
 
     return deleted
+
+# =========================================================
+# PERSISTED BLEND RESULTS
+# =========================================================
+
+def ensure_blend_results_table() -> bool:
+    """
+    Create the persisted Blend result cache if it does not exist.
+
+    The table stores derived recommendation rows only. Original ZIP files
+    are never stored here.
+    """
+    query = text(
+        """
+        CREATE TABLE IF NOT EXISTS public.blend_results (
+            blend_id UUID PRIMARY KEY
+                REFERENCES public.blends(blend_id)
+                ON DELETE CASCADE,
+            recommendations JSONB NOT NULL DEFAULT '[]'::jsonb,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+
+    try:
+        engine = get_engine()
+
+        with engine.begin() as connection:
+            connection.execute(query)
+
+        return True
+
+    except Exception as error:
+        print(
+            "BLEND RESULT TABLE ERROR | "
+            f"{type(error).__name__}: {error}"
+        )
+        return False
+
+
+def get_blend_recommendations(
+    blend_id: str,
+) -> pd.DataFrame | None:
+    """
+    Return persisted shared recommendations for a Blend.
+
+    None means no persisted result exists yet.
+    """
+    if not ensure_blend_results_table():
+        return None
+
+    query = text(
+        """
+        SELECT recommendations
+        FROM public.blend_results
+        WHERE blend_id = :blend_id
+        LIMIT 1
+        """
+    )
+
+    try:
+        engine = get_engine()
+
+        with engine.connect() as connection:
+            value = connection.execute(
+                query,
+                {"blend_id": blend_id},
+            ).scalar_one_or_none()
+
+        if value is None:
+            return None
+
+        if isinstance(value, str):
+            value = json.loads(value)
+
+        return pd.DataFrame(
+            value or []
+        )
+
+    except Exception as error:
+        print(
+            "BLEND RESULT READ ERROR | "
+            f"{type(error).__name__}: {error}"
+        )
+        return None
+
+
+def save_blend_recommendations(
+    blend_id: str,
+    recommendations: pd.DataFrame,
+) -> bool:
+    """Persist derived shared recommendations for fast future opens."""
+    if not ensure_blend_results_table():
+        return False
+
+    records = dataframe_to_records(
+        recommendations
+    )
+
+    payload = json.dumps(
+        _json_safe(records)
+    )
+
+    query = text(
+        """
+        INSERT INTO public.blend_results (
+            blend_id,
+            recommendations,
+            updated_at
+        )
+        VALUES (
+            :blend_id,
+            CAST(:recommendations AS JSONB),
+            NOW()
+        )
+        ON CONFLICT (blend_id)
+        DO UPDATE SET
+            recommendations = EXCLUDED.recommendations,
+            updated_at = NOW()
+        """
+    )
+
+    try:
+        engine = get_engine()
+
+        with engine.begin() as connection:
+            connection.execute(
+                query,
+                {
+                    "blend_id": blend_id,
+                    "recommendations": payload,
+                },
+            )
+
+        print(
+            "BLEND RESULT SAVED | "
+            f"blend_id={blend_id} | "
+            f"recommendations={len(records)}"
+        )
+        return True
+
+    except Exception as error:
+        print(
+            "BLEND RESULT WRITE ERROR | "
+            f"{type(error).__name__}: {error}"
+        )
+        return False

@@ -18,7 +18,9 @@ from src.letterboxd_pipeline.blend import (
     create_blend,
     get_blend,
     get_blend_profiles,
+    get_blend_recommendations,
     save_blend_profile,
+    save_blend_recommendations,
 )
 
 from src.letterboxd_pipeline.blend_engine import (
@@ -1524,57 +1526,78 @@ def render_blend_result(
 
     st.divider()
 
-    recommendation_status = st.status(
-        "Building shared recommendations...",
-        expanded=True,
+    # The visual Blend above is intentionally rendered before this expensive
+    # section. Users can read their results while recommendations are built.
+    persisted_recommendations = get_blend_recommendations(
+        blend_id
     )
 
-    try:
-        recommendation_status.write(
-            "Comparing both taste profiles..."
-        )
-        recommendation_status.write(
-            "Finding promising movies neither of you has watched..."
-        )
-
-        recommendations = (
-            _build_shared_recommendations(
-                creator_history.to_dict(
-                    orient="records"
-                ),
-                friend_history.to_dict(
-                    orient="records"
-                ),
-            )
-        )
-
-        recommendation_status.update(
-            label="Shared recommendations ready",
-            state="complete",
-            expanded=False,
-        )
-
+    if persisted_recommendations is not None:
         _render_blend_recommendations(
-            recommendations,
+            persisted_recommendations,
             creator_name,
             friend_name,
         )
-
-    except Exception as error:
-        recommendation_status.update(
-            label="Shared recommendations unavailable",
-            state="error",
-            expanded=False,
-        )
-        print(
-            "BLEND RECOMMENDATION ERROR | "
-            f"{type(error).__name__}: {error}"
+    else:
+        recommendation_status = st.status(
+            "Finding movies for both of you...",
+            expanded=True,
         )
 
-        st.info(
-            "Your Blend is ready, but shared "
-            "recommendations could not be generated."
-        )
+        try:
+            recommendation_status.write(
+                "Your Blend results are ready."
+            )
+            recommendation_status.write(
+                "Now building shared recommendations..."
+            )
+
+            recommendations = (
+                _build_shared_recommendations(
+                    creator_history.to_dict(
+                        orient="records"
+                    ),
+                    friend_history.to_dict(
+                        orient="records"
+                    ),
+                )
+            )
+
+            # Persist the expensive derived result. If the database write
+            # fails, the current page still works with the in-memory result.
+            save_blend_recommendations(
+                blend_id,
+                recommendations,
+            )
+
+            recommendation_status.update(
+                label="Shared recommendations ready",
+                state="complete",
+                expanded=False,
+            )
+
+            _render_blend_recommendations(
+                recommendations,
+                creator_name,
+                friend_name,
+            )
+
+        except Exception as error:
+            recommendation_status.update(
+                label="Shared recommendations unavailable",
+                state="error",
+                expanded=False,
+            )
+
+            print(
+                "BLEND RECOMMENDATION ERROR | "
+                f"{type(error).__name__}: {error}"
+            )
+
+            st.info(
+                "Your Blend results are ready, but shared "
+                "recommendations could not be generated."
+            )
 
 
 # =========================================================
@@ -1586,7 +1609,7 @@ def render_create_blend(
     ratings: pd.DataFrame,
     likes: pd.DataFrame,
 ):
-
+    """Creator flow with explicit, deterministic UI state."""
     st.header(
         "Movie Blend"
     )
@@ -1596,209 +1619,289 @@ def render_create_blend(
         "and discover what you should watch together."
     )
 
-    creator_name = st.text_input(
-        "Your name",
-        placeholder="Enter your name",
-        key="blend_creator_name",
-    )
-
-    if st.button(
-        "Create Movie Blend",
-        type="primary",
-    ):
-
-        creator_name = (
-            creator_name.strip()
-        )
-
-        if not creator_name:
-
-            st.warning(
-                "Enter your name first."
-            )
-
-        else:
-
-            try:
-
-                with st.spinner(
-                    "Creating your Movie Blend..."
-                ):
-                    creator_history = (
-                        attach_user_preferences(
-                            enriched,
-                            ratings,
-                            likes,
-                        )
-                    )
-
-                    creator_profile = (
-                        build_taste_profile(
-                            creator_history
-                        )
-                    )
-
-                    blend_id = create_blend(
-                        creator_name
-                    )
-
-                    save_blend_profile(
-                        blend_id=blend_id,
-                        profile_slot="creator",
-                        display_name=creator_name,
-                        taste_profile=creator_profile,
-                        movie_history=creator_history,
-                    )
-
-                    st.session_state[
-                        "created_blend_id"
-                    ] = blend_id
-
-                # Continue this same run so the invitation state appears
-                # immediately after the first click.
-
-            except Exception as error:
-
-                st.error(
-                    "Unable to create the Movie Blend."
-                )
-
-                print(
-                    "CREATE BLEND ERROR | "
-                    f"{type(error).__name__}: "
-                    f"{error}"
-                )
-
-                traceback.print_exc()
-
-    blend_id = st.session_state.get(
+    created_blend_id = st.session_state.get(
         "created_blend_id"
     )
 
-    if blend_id:
+    if created_blend_id:
+        blend = get_blend(
+            created_blend_id
+        )
+
+        if not blend:
+            st.session_state.pop(
+                "created_blend_id",
+                None,
+            )
+            st.session_state[
+                "blend_creator_state"
+            ] = "idle"
+            st.rerun()
+
+        creator_name = (
+            blend.get("creator_name")
+            or "Your friend"
+        )
+
+        ready = bool(
+            blend.get("creator_ready")
+            and blend.get("friend_ready")
+        )
+
+        if ready:
+            st.success(
+                "Your friend is ready. Loading your Movie Blend..."
+            )
+            render_blend_result(
+                created_blend_id
+            )
+            return
+
+        st.success(
+            "Your profile is ready."
+        )
+
+        st.subheader(
+            "Waiting for your friend..."
+        )
+
+        st.caption(
+            "Send this invitation link to your friend. "
+            "The result will unlock when they finish their profile."
+        )
 
         base_url = str(
             st.context.url
         ).rstrip("/")
 
         blend_url = (
-            f"{base_url}/?blend={blend_id}"
+            f"{base_url}/?blend={created_blend_id}"
         )
 
-        if blend_is_ready(blend_id):
-            st.success(
-                "Your Movie Blend is ready."
-            )
-            st.markdown(
-                f"[Open the results]({blend_url})"
-            )
-        else:
-            st.success(
-                "Your profile is ready."
-            )
-            st.subheader(
-                "Waiting for your friend..."
-            )
-            st.caption(
-                "Share this invitation link. Once your friend finishes "
-                "their analysis, opening the link will show your shared results."
+        st.text_input(
+            "Invitation link",
+            value=blend_url,
+            key=f"blend_url_{created_blend_id}",
+        )
+
+        check_message_key = (
+            f"blend_check_message_{created_blend_id}"
+        )
+
+        if st.button(
+            "Check if my friend is ready",
+            key=f"blend_check_{created_blend_id}",
+            type="primary",
+            width="stretch",
+        ):
+            st.session_state[
+                f"_blend_check_just_clicked_{created_blend_id}"
+            ] = True
+
+            # Render feedback in the same run; persist the final message.
+            check_placeholder = st.empty()
+            check_placeholder.info(
+                "Checking your Blend..."
             )
 
-            st.text_input(
-                "Invitation link",
-                value=blend_url,
-                key="blend_share_url",
-            )
-
-            check_message_key = (
-                f"blend_check_message_{blend_id}"
-            )
-
-            if st.button(
-                "Check if my friend is ready",
-                key=f"blend_check_{blend_id}",
-            ):
-                status_placeholder = st.empty()
-                status_placeholder.info(
-                    "Checking your Blend..."
+            try:
+                refreshed_blend = get_blend(
+                    created_blend_id
                 )
 
-                try:
-                    ready = blend_is_ready(
-                        blend_id
+                ready = bool(
+                    refreshed_blend
+                    and refreshed_blend.get(
+                        "creator_ready"
                     )
+                    and refreshed_blend.get(
+                        "friend_ready"
+                    )
+                )
 
-                    if ready:
-                        st.session_state.pop(
-                            check_message_key,
-                            None,
-                        )
-                        status_placeholder.success(
-                            "Your friend is ready. Loading your Movie Blend..."
-                        )
-                        st.rerun()
-                    else:
-                        message = (
-                            "Your friend hasn't finished uploading "
-                            "their data yet."
-                        )
-                        st.session_state[
-                            check_message_key
-                        ] = message
-                        status_placeholder.info(
-                            message
-                        )
-                        st.session_state[
-                            f"_blend_message_shown_{blend_id}"
-                        ] = True
-
-                except Exception as error:
+                if ready:
+                    st.session_state.pop(
+                        check_message_key,
+                        None,
+                    )
+                    check_placeholder.success(
+                        "Your friend is ready. Loading your Movie Blend..."
+                    )
+                    st.rerun()
+                else:
+                    message = (
+                        "Your friend hasn't finished uploading "
+                        "their profile yet."
+                    )
                     st.session_state[
                         check_message_key
-                    ] = (
-                        "Unable to check the Blend right now. "
-                        "Try again in a moment."
-                    )
-                    status_placeholder.error(
-                        st.session_state[
-                            check_message_key
-                        ]
-                    )
-                    st.session_state[
-                        f"_blend_message_shown_{blend_id}"
-                    ] = True
-                    print(
-                        "BLEND STATUS ERROR | "
-                        f"{type(error).__name__}: {error}"
+                    ] = message
+                    check_placeholder.info(
+                        message
                     )
 
-            check_message = st.session_state.get(
-                check_message_key
-            )
-
-            if check_message and not st.session_state.get(
-                f"_blend_message_shown_{blend_id}",
-                False,
-            ):
-                st.info(
-                    check_message
+            except Exception as error:
+                message = (
+                    "Unable to check the Blend right now. "
+                    "Try again in a moment."
+                )
+                st.session_state[
+                    check_message_key
+                ] = message
+                check_placeholder.error(
+                    message
+                )
+                print(
+                    "BLEND STATUS ERROR | "
+                    f"{type(error).__name__}: {error}"
                 )
 
-            # Internal flag is reset every rerun; it only prevents duplicate
-            # feedback in the click execution itself.
-            st.session_state.pop(
-                f"_blend_message_shown_{blend_id}",
-                None,
+        previous_message = st.session_state.get(
+            check_message_key
+        )
+
+        # On the click run, feedback is already displayed in the placeholder.
+        # On later reruns, keep the last status visible without duplicating it.
+        if previous_message and not st.session_state.get(
+            f"_blend_check_just_clicked_{created_blend_id}",
+            False,
+        ):
+            st.info(
+                previous_message
             )
 
-            st.caption(
-                "The original Letterboxd ZIP files are not stored."
+        st.session_state.pop(
+            f"_blend_check_just_clicked_{created_blend_id}",
+            None,
+        )
+
+        st.caption(
+            "The original Letterboxd ZIP files are not stored."
+        )
+        return
+
+    st.markdown(
+        "### Create your Movie Blend"
+    )
+
+    creator_name = st.text_input(
+        "Your name",
+        placeholder="Enter your name",
+        key="blend_creator_name",
+    )
+
+    create_clicked = st.button(
+        "Create Movie Blend",
+        type="primary",
+        width="stretch",
+        key="create_movie_blend_button",
+    )
+
+    if not create_clicked:
+        return
+
+    if not creator_name.strip():
+        st.error(
+            "Enter your name before creating the Blend."
+        )
+        return
+
+    # Guard against duplicate DB inserts from rapid/repeated clicks.
+    if st.session_state.get(
+        "blend_creator_state"
+    ) == "creating":
+        st.info(
+            "Your Movie Blend is already being created..."
+        )
+        return
+
+    st.session_state[
+        "blend_creator_state"
+    ] = "creating"
+
+    create_status = st.status(
+        "Creating your Movie Blend...",
+        expanded=True,
+    )
+
+    try:
+        create_status.write(
+            "Preparing your movie taste profile..."
+        )
+
+        creator_history = (
+            attach_user_preferences(
+                enriched,
+                ratings,
+                likes,
             )
+        )
 
+        creator_profile = (
+            build_taste_profile(
+                creator_history
+            )
+        )
 
-# =========================================================
-# FRIEND INVITATION
-# =========================================================
+        create_status.write(
+            "Creating your private Blend link..."
+        )
+
+        blend_id = create_blend(
+            creator_name.strip()
+        )
+
+        create_status.write(
+            "Saving your profile..."
+        )
+
+        save_blend_profile(
+            blend_id=blend_id,
+            profile_slot="creator",
+            display_name=creator_name.strip(),
+            taste_profile=creator_profile,
+            movie_history=creator_history,
+        )
+
+        st.session_state[
+            "created_blend_id"
+        ] = blend_id
+
+        st.session_state[
+            "blend_creator_state"
+        ] = "waiting"
+
+        create_status.update(
+            label="Movie Blend created",
+            state="complete",
+            expanded=False,
+        )
+
+        # One intentional rerun AFTER the completed id has been persisted.
+        # The next run enters the waiting branch above; no second click needed.
+        st.rerun()
+
+    except Exception as error:
+        st.session_state[
+            "blend_creator_state"
+        ] = "idle"
+
+        create_status.update(
+            label="Unable to create the Movie Blend",
+            state="error",
+            expanded=False,
+        )
+
+        st.error(
+            "Unable to create the Movie Blend."
+        )
+
+        print(
+            "CREATE BLEND ERROR | "
+            f"{type(error).__name__}: {error}"
+        )
+        traceback.print_exc()
+
 
 def render_blend_invitation(
     blend_id: str,
@@ -1818,22 +1921,18 @@ def render_blend_invitation(
         )
         return
 
-    with st.spinner(
-        "Checking Blend status..."
-    ):
-        ready = blend_is_ready(
-            blend_id
-        )
+    ready = bool(
+        blend.get("creator_ready")
+        and blend.get("friend_ready")
+    )
 
     if ready:
-        loading_message = st.empty()
-        loading_message.info(
-            "Both profiles are ready. Building your Movie Blend..."
+        st.info(
+            "Both profiles are ready. Loading your Movie Blend..."
         )
         render_blend_result(
             blend_id
         )
-        loading_message.empty()
         return
 
     creator_name = _display_name(
@@ -1892,6 +1991,10 @@ def render_blend_invitation(
             return
 
         try:
+            blend_status = st.status(
+                "Preparing your Movie Blend...",
+                expanded=True,
+            )
 
             upload_bytes = (
                 uploaded_file.getvalue()
@@ -1920,7 +2023,9 @@ def render_blend_invitation(
                 )
                 is not None
             ):
-
+                blend_status.write(
+                    "Using your already processed movie history."
+                )
                 friend_history = (
                     st.session_state[
                         "blend_friend_history"
@@ -1928,16 +2033,15 @@ def render_blend_invitation(
                 )
 
             else:
+                blend_status.write(
+                    "Analyzing and enriching your movie history..."
+                )
 
-                with st.spinner(
-                    "Analyzing your movie history..."
-                ):
-
-                    friend_history = (
-                        _profile_history_from_upload(
-                            uploaded_file
-                        )
+                friend_history = (
+                    _profile_history_from_upload(
+                        uploaded_file
                     )
+                )
 
                 st.session_state[
                     processing_key
@@ -1947,27 +2051,37 @@ def render_blend_invitation(
                     "blend_friend_history"
                 ] = friend_history
 
-            with st.spinner(
-                "Finishing your Movie Blend..."
-            ):
-                friend_profile = (
-                    build_taste_profile(
-                        friend_history
-                    )
-                )
-
-                save_blend_profile(
-                    blend_id=blend_id,
-                    profile_slot="friend",
-                    display_name=friend_name.strip(),
-                    taste_profile=friend_profile,
-                    movie_history=friend_history,
-                )
-
-            st.success(
-                "Your profiles are connected. Building your results..."
+            blend_status.write(
+                "Movie analysis complete. Building your taste profile..."
             )
 
+            friend_profile = (
+                build_taste_profile(
+                    friend_history
+                )
+            )
+
+            blend_status.write(
+                "Saving your profile and connecting both sides..."
+            )
+
+            save_blend_profile(
+                blend_id=blend_id,
+                profile_slot="friend",
+                display_name=friend_name.strip(),
+                taste_profile=friend_profile,
+                movie_history=friend_history,
+            )
+
+            blend_status.update(
+                label="Profiles connected. Opening your results...",
+                state="complete",
+                expanded=False,
+            )
+
+            # Do not claim that recommendations are already finished.
+            # The next render shows the core Blend first, then builds/persists
+            # recommendations underneath it.
             st.rerun()
 
         except Exception as error:
