@@ -457,15 +457,42 @@ def upsert_movies(
             columns
         ].copy()
 
-        records = (
-            clean_df
-            .where(
-                pd.notna(clean_df),
-                None,
-            )
-            .to_dict(
-                orient="records"
-            )
+        # Normalize PostgreSQL numeric fields before building records.
+        # Empty strings must become NULL instead of being sent to numeric
+        # PostgreSQL columns such as BIGINT.
+        integer_columns = [
+            "release_year",
+            "runtime_min",
+        ]
+
+        float_columns = [
+            "vote_average",
+            "popularity",
+        ]
+
+        for column in integer_columns:
+            if column in clean_df.columns:
+                clean_df[column] = pd.to_numeric(
+                    clean_df[column],
+                    errors="coerce",
+                ).astype("Int64")
+
+        for column in float_columns:
+            if column in clean_df.columns:
+                clean_df[column] = pd.to_numeric(
+                    clean_df[column],
+                    errors="coerce",
+                )
+
+        # Convert pandas NaN / NA values to real Python None so
+        # SQLAlchemy/psycopg2 sends PostgreSQL NULL.
+        clean_df = clean_df.astype(object).where(
+            pd.notna(clean_df),
+            None,
+        )
+
+        records = clean_df.to_dict(
+            orient="records"
         )
 
         if not records:
