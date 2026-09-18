@@ -439,74 +439,121 @@ def _render_blend_recommendations(
                     )
 
 
+def _prefilter_blend_candidates(
+    candidates: list[dict],
+    limit: int = 90,
+) -> list[dict]:
+    """Reduce the discovery pool before expensive TMDB detail enrichment."""
+
+    if not candidates:
+        return []
+
+    ranked = []
+
+    for candidate in candidates:
+        vote_average = pd.to_numeric(
+            candidate.get("vote_average"),
+            errors="coerce",
+        )
+        vote_count = pd.to_numeric(
+            candidate.get("vote_count"),
+            errors="coerce",
+        )
+        popularity = pd.to_numeric(
+            candidate.get("popularity"),
+            errors="coerce",
+        )
+
+        vote_average = 0.0 if pd.isna(vote_average) else float(vote_average)
+        vote_count = 0.0 if pd.isna(vote_count) else float(vote_count)
+        popularity = 0.0 if pd.isna(popularity) else float(popularity)
+
+        if vote_average < 6.2 or vote_count < 150:
+            continue
+
+        discovery_score = (
+            vote_average * 10
+            + min(vote_count / 250, 20)
+            + min(popularity / 25, 8)
+        )
+        ranked.append((discovery_score, candidate))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [candidate for _, candidate in ranked[:limit]]
+
+
 # =========================================================
 # BUILD SHARED RECOMMENDATIONS
 # =========================================================
 
 @st.cache_data(
     show_spinner=False,
+    ttl=60 * 60 * 24,
 )
 def _build_shared_recommendations(
     creator_history_records,
     friend_history_records,
 ):
+    creator_history = pd.DataFrame(creator_history_records)
+    friend_history = pd.DataFrame(friend_history_records)
 
-    creator_history = pd.DataFrame(
-        creator_history_records
-    )
-
-    friend_history = pd.DataFrame(
-        friend_history_records
-    )
-
-    creator_profile = build_taste_profile(
-        creator_history
-    )
-
-    friend_profile = build_taste_profile(
-        friend_history
-    )
+    creator_profile = build_taste_profile(creator_history)
+    friend_profile = build_taste_profile(friend_history)
 
     creator_genres = creator_profile.get(
-        "genre_combined", creator_profile.get("genre_primary", {})
+        "genre_combined",
+        creator_profile.get("genre_primary", {}),
     )
     friend_genres = friend_profile.get(
-        "genre_combined", friend_profile.get("genre_primary", {})
+        "genre_combined",
+        friend_profile.get("genre_primary", {}),
     )
 
     shared_genre_scores = {
-        genre: min(float(creator_genres.get(genre, 0.0)), float(friend_genres.get(genre, 0.0)))
+        genre: min(
+            float(creator_genres.get(genre, 0.0)),
+            float(friend_genres.get(genre, 0.0)),
+        )
         for genre in (set(creator_genres) & set(friend_genres))
     }
+
     preferred_genres = [
-        genre for genre, _ in sorted(
-            shared_genre_scores.items(), key=lambda item: item[1], reverse=True
+        genre
+        for genre, _ in sorted(
+            shared_genre_scores.items(),
+            key=lambda item: item[1],
+            reverse=True,
         )[:6]
     ]
+
     if not preferred_genres:
-        preferred_genres = list(dict.fromkeys(
-            list(creator_genres.keys()) + list(friend_genres.keys())
-        ))[:6]
+        preferred_genres = list(
+            dict.fromkeys(
+                list(creator_genres.keys())
+                + list(friend_genres.keys())
+            )
+        )[:6]
 
     candidates = build_candidate_catalog(
         preferred_genres,
         pages_per_genre=2,
     )
 
-    # TMDB detail + credits calls are the expensive part of Blend.
-    # Narrow the discovery pool first, then enrich only the strongest
-    # candidates instead of hundreds of movies.
-    candidates = prefilter_candidates(
+    candidates = _prefilter_blend_candidates(
         candidates,
         limit=90,
     )
 
-    candidate_df = (
-        enrich_candidate_catalog(
-            candidates,
-            max_workers=8,
-        )
+    if not candidates:
+        return pd.DataFrame()
+
+    candidate_df = enrich_candidate_catalog(
+        candidates,
+        max_workers=8,
     )
+
+    if candidate_df.empty:
+        return pd.DataFrame()
 
     return rank_blend_candidates(
         candidate_df,
@@ -515,6 +562,23 @@ def _build_shared_recommendations(
         creator_history,
         friend_history,
         limit=30,
+    )
+
+
+@st.cache_data(
+    show_spinner=False,
+    ttl=60 * 60 * 24,
+)
+def _build_cached_blend_analysis(
+    creator_history_records,
+    friend_history_records,
+):
+    creator_history = pd.DataFrame(creator_history_records)
+    friend_history = pd.DataFrame(friend_history_records)
+
+    return build_blend_analysis(
+        creator_history,
+        friend_history,
     )
 
 
@@ -552,9 +616,9 @@ def render_blend_result(
     creator_history = _history_from_profile(creator_data)
     friend_history = _history_from_profile(friend_data)
 
-    analysis = build_blend_analysis(
-        creator_history,
-        friend_history,
+    analysis = _build_cached_blend_analysis(
+        creator_history.to_dict(orient="records"),
+        friend_history.to_dict(orient="records"),
     )
 
     creator_profile = analysis["creator_profile"]
@@ -699,52 +763,10 @@ def render_blend_result(
         friend_profile,
     )
 
-    # Older Blends may have been stored before poster_path
-    # was preserved. Recover posters directly from TMDB IDs.
     both_love = analysis.get(
         "movies_both_love",
         pd.DataFrame(),
     ).copy()
-
-    if not both_love.empty:
-        if "poster_path" not in both_love.columns:
-            both_love["poster_path"] = None
-
-        for index, movie in both_love.iterrows():
-            current_poster = movie.get(
-                "poster_path"
-            )
-
-            if (
-                pd.notna(current_poster)
-                and str(current_poster).strip()
-            ):
-                continue
-
-            tmdb_id = movie.get(
-                "tmdb_id"
-            )
-
-            if pd.isna(tmdb_id):
-                continue
-
-            try:
-                details = get_movie_details(
-                    int(float(tmdb_id))
-                )
-
-                both_love.at[
-                    index,
-                    "poster_path",
-                ] = details.get(
-                    "poster_path"
-                )
-
-            except Exception as error:
-                print(
-                    "BLEND POSTER ERROR | "
-                    f"{type(error).__name__}: {error}"
-                )
 
     # =====================================================
     # LETTERBOXD BLEND CSS
@@ -1502,20 +1524,35 @@ def render_blend_result(
 
     st.divider()
 
+    recommendation_status = st.status(
+        "Building shared recommendations...",
+        expanded=True,
+    )
+
     try:
-        with st.spinner(
-            "Finding movies for both of you..."
-        ):
-            recommendations = (
-                _build_shared_recommendations(
-                    creator_history.to_dict(
-                        orient="records"
-                    ),
-                    friend_history.to_dict(
-                        orient="records"
-                    ),
-                )
+        recommendation_status.write(
+            "Comparing both taste profiles..."
+        )
+        recommendation_status.write(
+            "Finding promising movies neither of you has watched..."
+        )
+
+        recommendations = (
+            _build_shared_recommendations(
+                creator_history.to_dict(
+                    orient="records"
+                ),
+                friend_history.to_dict(
+                    orient="records"
+                ),
             )
+        )
+
+        recommendation_status.update(
+            label="Shared recommendations ready",
+            state="complete",
+            expanded=False,
+        )
 
         _render_blend_recommendations(
             recommendations,
@@ -1524,6 +1561,11 @@ def render_blend_result(
         )
 
     except Exception as error:
+        recommendation_status.update(
+            label="Shared recommendations unavailable",
+            state="error",
+            expanded=False,
+        )
         print(
             "BLEND RECOMMENDATION ERROR | "
             f"{type(error).__name__}: {error}"
@@ -1579,35 +1621,41 @@ def render_create_blend(
 
             try:
 
-                creator_history = (
-                    attach_user_preferences(
-                        enriched,
-                        ratings,
-                        likes,
+                with st.spinner(
+                    "Creating your Movie Blend..."
+                ):
+                    creator_history = (
+                        attach_user_preferences(
+                            enriched,
+                            ratings,
+                            likes,
+                        )
                     )
-                )
 
-                creator_profile = (
-                    build_taste_profile(
-                        creator_history
+                    creator_profile = (
+                        build_taste_profile(
+                            creator_history
+                        )
                     )
-                )
 
-                blend_id = create_blend(
-                    creator_name
-                )
+                    blend_id = create_blend(
+                        creator_name
+                    )
 
-                save_blend_profile(
-                    blend_id=blend_id,
-                    profile_slot="creator",
-                    display_name=creator_name,
-                    taste_profile=creator_profile,
-                    movie_history=creator_history,
-                )
+                    save_blend_profile(
+                        blend_id=blend_id,
+                        profile_slot="creator",
+                        display_name=creator_name,
+                        taste_profile=creator_profile,
+                        movie_history=creator_history,
+                    )
 
-                st.session_state[
-                    "created_blend_id"
-                ] = blend_id
+                    st.session_state[
+                        "created_blend_id"
+                    ] = blend_id
+
+                # Continue this same run so the invitation state appears
+                # immediately after the first click.
 
             except Exception as error:
 
@@ -1662,11 +1710,86 @@ def render_create_blend(
                 key="blend_share_url",
             )
 
+            check_message_key = (
+                f"blend_check_message_{blend_id}"
+            )
+
             if st.button(
                 "Check if my friend is ready",
                 key=f"blend_check_{blend_id}",
             ):
-                st.rerun()
+                status_placeholder = st.empty()
+                status_placeholder.info(
+                    "Checking your Blend..."
+                )
+
+                try:
+                    ready = blend_is_ready(
+                        blend_id
+                    )
+
+                    if ready:
+                        st.session_state.pop(
+                            check_message_key,
+                            None,
+                        )
+                        status_placeholder.success(
+                            "Your friend is ready. Loading your Movie Blend..."
+                        )
+                        st.rerun()
+                    else:
+                        message = (
+                            "Your friend hasn't finished uploading "
+                            "their data yet."
+                        )
+                        st.session_state[
+                            check_message_key
+                        ] = message
+                        status_placeholder.info(
+                            message
+                        )
+                        st.session_state[
+                            f"_blend_message_shown_{blend_id}"
+                        ] = True
+
+                except Exception as error:
+                    st.session_state[
+                        check_message_key
+                    ] = (
+                        "Unable to check the Blend right now. "
+                        "Try again in a moment."
+                    )
+                    status_placeholder.error(
+                        st.session_state[
+                            check_message_key
+                        ]
+                    )
+                    st.session_state[
+                        f"_blend_message_shown_{blend_id}"
+                    ] = True
+                    print(
+                        "BLEND STATUS ERROR | "
+                        f"{type(error).__name__}: {error}"
+                    )
+
+            check_message = st.session_state.get(
+                check_message_key
+            )
+
+            if check_message and not st.session_state.get(
+                f"_blend_message_shown_{blend_id}",
+                False,
+            ):
+                st.info(
+                    check_message
+                )
+
+            # Internal flag is reset every rerun; it only prevents duplicate
+            # feedback in the click execution itself.
+            st.session_state.pop(
+                f"_blend_message_shown_{blend_id}",
+                None,
+            )
 
             st.caption(
                 "The original Letterboxd ZIP files are not stored."
@@ -1681,9 +1804,12 @@ def render_blend_invitation(
     blend_id: str,
 ):
 
-    blend = get_blend(
-        blend_id
-    )
+    with st.spinner(
+        "Loading Movie Blend..."
+    ):
+        blend = get_blend(
+            blend_id
+        )
 
     if not blend:
 
@@ -1692,12 +1818,22 @@ def render_blend_invitation(
         )
         return
 
-    if blend_is_ready(
-        blend_id
+    with st.spinner(
+        "Checking Blend status..."
     ):
+        ready = blend_is_ready(
+            blend_id
+        )
+
+    if ready:
+        loading_message = st.empty()
+        loading_message.info(
+            "Both profiles are ready. Building your Movie Blend..."
+        )
         render_blend_result(
             blend_id
         )
+        loading_message.empty()
         return
 
     creator_name = _display_name(
@@ -1811,22 +1947,25 @@ def render_blend_invitation(
                     "blend_friend_history"
                 ] = friend_history
 
-            friend_profile = (
-                build_taste_profile(
-                    friend_history
+            with st.spinner(
+                "Finishing your Movie Blend..."
+            ):
+                friend_profile = (
+                    build_taste_profile(
+                        friend_history
+                    )
                 )
-            )
 
-            save_blend_profile(
-                blend_id=blend_id,
-                profile_slot="friend",
-                display_name=friend_name.strip(),
-                taste_profile=friend_profile,
-                movie_history=friend_history,
-            )
+                save_blend_profile(
+                    blend_id=blend_id,
+                    profile_slot="friend",
+                    display_name=friend_name.strip(),
+                    taste_profile=friend_profile,
+                    movie_history=friend_history,
+                )
 
             st.success(
-                "Your profiles are connected."
+                "Your profiles are connected. Building your results..."
             )
 
             st.rerun()

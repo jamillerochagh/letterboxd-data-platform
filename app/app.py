@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 # =========================================================
@@ -53,7 +54,6 @@ from blend_ui import (
 
 st.set_page_config(
     page_title="Letterboxd Analytics",
-    page_icon=":material/movie:",
     layout="wide",
 )
 
@@ -1010,13 +1010,53 @@ def get_timeline_movie_metadata(
     title: str,
     year: str = "",
 ):
-    try:
-        return fetch_movie_metadata(
-            title,
-            year,
+    """
+    Resolve timeline metadata with lightweight title variants.
+
+    Letterboxd can export localized compound titles such as
+    "Franchise: Film". TMDB may index the film under only the subtitle,
+    so retry the part after a colon before giving up.
+    """
+    clean_title = str(title or "").strip()
+
+    title_variants = [clean_title]
+
+    if ":" in clean_title:
+        subtitle = clean_title.split(":", 1)[1].strip()
+        if subtitle:
+            title_variants.append(subtitle)
+
+    # Preserve order while removing duplicates.
+    title_variants = list(
+        dict.fromkeys(
+            variant
+            for variant in title_variants
+            if variant
         )
-    except Exception:
-        return {}
+    )
+
+    for variant in title_variants:
+        try:
+            metadata = fetch_movie_metadata(
+                variant,
+                year,
+            ) or {}
+
+            poster_path = metadata.get(
+                "poster_path"
+            )
+
+            if (
+                poster_path is not None
+                and pd.notna(poster_path)
+                and str(poster_path).strip()
+            ):
+                return metadata
+
+        except Exception:
+            continue
+
+    return {}
 
 
 
@@ -1209,42 +1249,152 @@ def render_movie_poster_carousel(
 def render_country_ranking(
     countries: pd.DataFrame,
 ):
+    """Render a scrollable companion list at the same visual height as the map."""
     if countries is None or countries.empty:
         return
 
+    display = countries.copy()
+
+    max_movies = pd.to_numeric(
+        display["Movies"],
+        errors="coerce",
+    ).max()
+
+    if pd.isna(max_movies) or float(max_movies) <= 0:
+        max_movies = 1.0
+
     rows = []
 
-    for index, row in countries.iterrows():
-        rows.append(
-            "<tr>"
-            f"<td>{int(index) + 1}</td>"
-            f"<td>{html.escape(str(row['Country']))}</td>"
-            f"<td>{int(row['Movies'])}</td>"
-            "</tr>"
+    for _, row in display.iterrows():
+        country = html.escape(
+            str(row["Country"])
+        )
+        movies_value = pd.to_numeric(
+            row["Movies"],
+            errors="coerce",
+        )
+        movies = (
+            0
+            if pd.isna(movies_value)
+            else int(movies_value)
         )
 
-    st.markdown(
-        """
-        <div class="country-ranking-scroll">
-            <div class="lb-compact-table-wrap">
-                <table class="lb-compact-table">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Country</th>
-                            <th>Movies</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-        """
-        + "".join(rows)
-        + """
-                    </tbody>
-                </table>
+        ratio = min(
+            float(movies) / float(max_movies),
+            1.0,
+        )
+        bar_width = max(
+            1.5,
+            ratio * 100,
+        )
+
+        rows.append(
+            f"""
+            <div class="country-row">
+                <div class="country-line">
+                    <span class="country-name">{country}</span>
+                    <span class="country-count">{movies}</span>
+                </div>
+                <div class="bar-track">
+                    <div class="bar-fill" style="width:{bar_width:.2f}%"></div>
+                </div>
             </div>
+            """
+        )
+
+    legend_html = f"""
+    <!doctype html>
+    <html>
+    <head>
+        <style>
+            html, body {{
+                margin: 0;
+                padding: 0;
+                background: transparent;
+                color: #F4F7F9;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                             Roboto, Helvetica, Arial, sans-serif;
+            }}
+
+            .legend {{
+                height: 430px;
+                overflow-y: auto;
+                overflow-x: hidden;
+                padding: 8px 8px 8px 2px;
+                box-sizing: border-box;
+                scrollbar-width: thin;
+                scrollbar-color: #303A43 transparent;
+            }}
+
+            .legend::-webkit-scrollbar {{
+                width: 6px;
+            }}
+
+            .legend::-webkit-scrollbar-track {{
+                background: transparent;
+            }}
+
+            .legend::-webkit-scrollbar-thumb {{
+                background: #303A43;
+                border-radius: 999px;
+            }}
+
+            .country-row {{
+                margin-bottom: 14px;
+            }}
+
+            .country-line {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                margin-bottom: 6px;
+            }}
+
+            .country-name {{
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-size: 13px;
+                line-height: 1.2;
+                color: #F4F7F9;
+            }}
+
+            .country-count {{
+                flex: 0 0 auto;
+                font-size: 12px;
+                color: #A8B3BD;
+                font-variant-numeric: tabular-nums;
+            }}
+
+            .bar-track {{
+                width: 100%;
+                height: 7px;
+                background: #151A1E;
+                border-radius: 999px;
+                overflow: hidden;
+            }}
+
+            .bar-fill {{
+                height: 100%;
+                background: #00E054;
+                border-radius: 999px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="legend">
+            {''.join(rows)}
         </div>
-        """,
-        unsafe_allow_html=True,
+    </body>
+    </html>
+    """
+
+    components.html(
+        legend_html,
+        height=446,
+        scrolling=False,
     )
 
 
@@ -1377,17 +1527,41 @@ def render_first_last_watch(
             ):
                 try:
                     movie_year = row.get("Year", "")
+                    movie_title = str(
+                        row.get("Name", "")
+                    ).strip()
+
+                    movie_year_text = (
+                        str(int(float(movie_year)))
+                        if (
+                            pd.notna(movie_year)
+                            and str(movie_year).strip()
+                        )
+                        else ""
+                    )
+
                     metadata_fallback = get_timeline_movie_metadata(
-                        str(row.get("Name", "")),
-                        (
-                            str(int(float(movie_year)))
-                            if pd.notna(movie_year)
-                            else ""
-                        ),
+                        movie_title,
+                        movie_year_text,
                     )
                     poster_path = metadata_fallback.get(
                         "poster_path"
                     )
+
+                    # Some diary rows have no usable release year.
+                    # Retry title-only before giving up.
+                    if (
+                        poster_path is None
+                        or pd.isna(poster_path)
+                        or not str(poster_path).strip()
+                    ):
+                        metadata_fallback = get_timeline_movie_metadata(
+                            movie_title,
+                            "",
+                        )
+                        poster_path = metadata_fallback.get(
+                            "poster_path"
+                        )
                 except Exception:
                     poster_path = None
 
@@ -1407,6 +1581,28 @@ def render_first_last_watch(
                         f"{poster_path}",
                         width="stretch",
                     )
+                else:
+                    st.markdown(
+                        """
+                        <div style="
+                            aspect-ratio:2/3;
+                            width:100%;
+                            border:1px solid #303A43;
+                            border-radius:10px;
+                            background:#151A1E;
+                            display:flex;
+                            align-items:center;
+                            justify-content:center;
+                            color:#6F7C87;
+                            font-size:12px;
+                            text-align:center;
+                            padding:12px;
+                        ">
+                            Poster unavailable
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
             with inner_right:
                 st.caption(label)
@@ -1421,14 +1617,17 @@ def render_first_last_watch(
                 movie_year = row.get("Year")
                 year_label = ""
 
-                if pd.notna(movie_year):
+                if (
+                    pd.notna(movie_year)
+                    and str(movie_year).strip()
+                ):
                     try:
                         year_label = (
                             f" ({int(float(movie_year))})"
                         )
                     except (TypeError, ValueError):
                         year_label = (
-                            f" ({movie_year})"
+                            f" ({str(movie_year).strip()})"
                         )
 
                 st.markdown(
@@ -2443,9 +2642,6 @@ def render_your_taste(
 
             with list_col:
 
-                st.markdown(
-                    "#### Most Watched Countries"
-                )
 
                 country_ranking = (
                     countries
@@ -4799,12 +4995,11 @@ else:
             )
 
         elif section == "Recommendations":
-            with st.spinner("Building your personalized recommendations..."):
-                recommendation_profile, recommendations = get_recommendations(
-                    enriched,
-                    ratings,
-                    likes,
-                )
+            recommendation_profile, recommendations = get_recommendations(
+                enriched,
+                ratings,
+                likes,
+            )
 
             render_recommendations(
                 recommendations,
