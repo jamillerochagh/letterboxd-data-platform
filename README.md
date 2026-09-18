@@ -1,5 +1,7 @@
 # Letterboxd Data Platform
 
+Analyze your Letterboxd history, discover your movie taste, get personalized recommendations, and compare your taste with friends through Movie Blend.
+
 An end-to-end data platform that transforms raw Letterboxd exports into enriched movie analytics, taste profiles, audience comparisons, and personalized recommendations.
 
 The project combines data ingestion, external API enrichment, PostgreSQL caching, analytical processing, and an interactive Streamlit application.

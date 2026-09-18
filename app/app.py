@@ -53,6 +53,7 @@ from blend_ui import (
 
 st.set_page_config(
     page_title="Letterboxd Analytics",
+    page_icon=":material/movie:",
     layout="wide",
 )
 
